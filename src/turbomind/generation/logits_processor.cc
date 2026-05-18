@@ -35,6 +35,13 @@ struct LogitsProcessor::Data {
         repetition_penalty_buf = {max_batch_size, device};
         min_lengths_buf        = {max_batch_size, device};
         temperature_buf        = {max_batch_size, device};
+        token_decision_infer_type_buf           = {max_batch_size, device};
+        token_decision_valid_id_buf             = {max_batch_size, device};
+        token_decision_invalid_id_buf           = {max_batch_size, device};
+        token_decision_end_id_buf               = {max_batch_size, device};
+        token_decision_certainty_threshold_buf  = {max_batch_size, device};
+        token_decision_completion_threshold_buf = {max_batch_size, device};
+        token_decision_invalid_bias_buf         = {max_batch_size, device};
         bad_words_buf          = {max_batch_size * 2 * kMaxStopBadWordsLen, device};
         end_ids_buf            = {max_batch_size * kMaxEndIdsSize, device};
     }
@@ -42,6 +49,13 @@ struct LogitsProcessor::Data {
     Buffer_<float> repetition_penalty_buf;
     Buffer_<int>   min_lengths_buf;
     Buffer_<float> temperature_buf;
+    Buffer_<int>   token_decision_infer_type_buf;
+    Buffer_<int>   token_decision_valid_id_buf;
+    Buffer_<int>   token_decision_invalid_id_buf;
+    Buffer_<int>   token_decision_end_id_buf;
+    Buffer_<float> token_decision_certainty_threshold_buf;
+    Buffer_<float> token_decision_completion_threshold_buf;
+    Buffer_<float> token_decision_invalid_bias_buf;
     Buffer_<int>   bad_words_buf;
     Buffer_<int>   end_ids_buf;
 
@@ -52,6 +66,7 @@ struct LogitsProcessor::Data {
     bool has_bad_words_penalty{};
     bool has_min_length_penalty{};
     bool has_temperature_penalty{};
+    bool has_token_decision_penalty{};
 };
 
 LogitsProcessor::LogitsProcessor(const BaseGenerationParam& base, int phases): BaseGenerationParam{base}
@@ -64,6 +79,12 @@ LogitsProcessor::LogitsProcessor(const BaseGenerationParam& base, int phases): B
 
 void LogitsProcessor::Forward(int phase, TensorMap& env)
 {
+    auto& d = *data_.at(phase);
+    if (!d.has_repetition_penalty && !d.bad_words_ten && !d.has_min_length_penalty && !d.has_temperature_penalty
+        && !d.has_token_decision_penalty) {
+        return;
+    }
+
     // apply repetition penalty -> ban bad words -> min length penalty -> temperature penalty
     // the order is same with transformerss
     TM_LOG_DEBUG("{} start", __PRETTY_FUNCTION__);
@@ -73,8 +94,6 @@ void LogitsProcessor::Forward(int phase, TensorMap& env)
     const Buffer_<int>  sequence_length = env.at("sequence_length").buffer();
 
     const auto bsz = logits.shape(0);
-
-    auto& d = *data_.at(phase);
 
     auto stream = core::Context::stream().handle();
 
@@ -115,6 +134,21 @@ void LogitsProcessor::Forward(int phase, TensorMap& env)
         sync_check_cuda_error();
     }
 
+    if (d.has_token_decision_penalty) {
+        ApplyTokenDecisionPenalty(logits,
+                                  d.token_decision_infer_type_buf,
+                                  d.token_decision_valid_id_buf,
+                                  d.token_decision_invalid_id_buf,
+                                  d.token_decision_end_id_buf,
+                                  d.token_decision_certainty_threshold_buf,
+                                  d.token_decision_completion_threshold_buf,
+                                  d.token_decision_invalid_bias_buf,
+                                  vocab_size_,
+                                  vocab_size_padded_,
+                                  stream);
+        sync_check_cuda_error();
+    }
+
     TM_LOG_DEBUG("{} stop", __PRETTY_FUNCTION__);
 }
 
@@ -129,14 +163,22 @@ void LogitsProcessor::Setup(int phase, TensorMap& env)
 
     const int bsz = rs.size();
 
-    auto& repetition_penalty = buf_->repetition_penalty_buf;
-    auto& temperature        = buf_->temperature_buf;
-    auto& min_lengths        = buf_->min_lengths_buf;
+    auto& repetition_penalty            = buf_->repetition_penalty_buf;
+    auto& temperature                   = buf_->temperature_buf;
+    auto& min_lengths                   = buf_->min_lengths_buf;
+    auto& decision_infer_type           = buf_->token_decision_infer_type_buf;
+    auto& decision_valid_id             = buf_->token_decision_valid_id_buf;
+    auto& decision_invalid_id           = buf_->token_decision_invalid_id_buf;
+    auto& decision_end_id               = buf_->token_decision_end_id_buf;
+    auto& decision_certainty_threshold  = buf_->token_decision_certainty_threshold_buf;
+    auto& decision_completion_threshold = buf_->token_decision_completion_threshold_buf;
+    auto& decision_invalid_bias         = buf_->token_decision_invalid_bias_buf;
 
-    d.has_temperature_penalty = {};
-    d.has_min_length_penalty  = {};
-    d.has_repetition_penalty  = {};
-    d.has_bad_words_penalty   = {};
+    d.has_temperature_penalty    = {};
+    d.has_min_length_penalty     = {};
+    d.has_repetition_penalty     = {};
+    d.has_bad_words_penalty      = {};
+    d.has_token_decision_penalty = {};
 
     for (int i = 0; i < bsz; ++i) {
         auto& g = rs[i]->gen_cfg;
@@ -158,30 +200,66 @@ void LogitsProcessor::Setup(int phase, TensorMap& env)
         if (rs[i]->seq_len + rs[i]->beta < min_lengths[i]) {
             d.has_min_length_penalty = true;
         }
+
+        const auto& [bad_token_ids, bad_offsets] = g.bad_ids;
+        if (bad_offsets.size() != 0 && bad_token_ids.size() != 0) {
+            d.has_bad_words_penalty = true;
+        }
+
+        decision_infer_type[i]           = g.token_decision_infer_type;
+        decision_valid_id[i]             = g.token_decision_valid_id;
+        decision_invalid_id[i]           = g.token_decision_invalid_id;
+        decision_end_id[i]               = g.token_decision_end_id;
+        decision_certainty_threshold[i]  = g.token_decision_certainty_threshold;
+        decision_completion_threshold[i] = g.token_decision_completion_threshold;
+        decision_invalid_bias[i]         = g.token_decision_invalid_bias;
+        if (g.token_decision_infer_type >= 0) {
+            d.has_token_decision_penalty = true;
+        }
     }
+
+    bool copied_penalty_params = false;
 
     if (d.has_temperature_penalty) {
         copy(temperature, bsz, d.temperature_buf);
+        copied_penalty_params = true;
     }
 
     if (d.has_repetition_penalty) {
         copy(repetition_penalty, bsz, d.repetition_penalty_buf);
+        copied_penalty_params = true;
     }
 
     if (d.has_min_length_penalty) {
         copy(min_lengths, bsz, d.min_lengths_buf);
+        copied_penalty_params = true;
     }
 
-    sync_check_cuda_error();
+    if (d.has_token_decision_penalty) {
+        copy(decision_infer_type, bsz, d.token_decision_infer_type_buf);
+        copy(decision_valid_id, bsz, d.token_decision_valid_id_buf);
+        copy(decision_invalid_id, bsz, d.token_decision_invalid_id_buf);
+        copy(decision_end_id, bsz, d.token_decision_end_id_buf);
+        copy(decision_certainty_threshold, bsz, d.token_decision_certainty_threshold_buf);
+        copy(decision_completion_threshold, bsz, d.token_decision_completion_threshold_buf);
+        copy(decision_invalid_bias, bsz, d.token_decision_invalid_bias_buf);
+        copied_penalty_params = true;
+    }
+
+    if (copied_penalty_params) {
+        sync_check_cuda_error();
+    }
 
     d.bad_words_ten = {};
-    init_stop_bad_words(&GenerationConfig::bad_ids,  //
-                        "bad_words",
-                        rs,
-                        buf_->bad_words_buf.data(),
-                        d.bad_words_buf.data(),
-                        d.bad_words_ten,
-                        copy);
+    if (d.has_bad_words_penalty) {
+        init_stop_bad_words(&GenerationConfig::bad_ids,  //
+                            "bad_words",
+                            rs,
+                            buf_->bad_words_buf.data(),
+                            d.bad_words_buf.data(),
+                            d.bad_words_ten,
+                            copy);
+    }
 
     if (d.has_min_length_penalty) {  // end ids for min length
         d.end_ids_ten  = {};

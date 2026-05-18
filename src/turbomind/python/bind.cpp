@@ -348,6 +348,15 @@ PYBIND11_MODULE(_turbomind, m)
         .def_readwrite("output_logprobs", &ft::GenerationConfig::output_logprobs)
         .def_readwrite("output_last_hidden_state", &ft::GenerationConfig::output_last_hidden_state)
         .def_readwrite("output_logits", &ft::GenerationConfig::output_logits)
+        .def_readwrite("token_decision_infer_type", &ft::GenerationConfig::token_decision_infer_type)
+        .def_readwrite("token_decision_valid_id", &ft::GenerationConfig::token_decision_valid_id)
+        .def_readwrite("token_decision_invalid_id", &ft::GenerationConfig::token_decision_invalid_id)
+        .def_readwrite("token_decision_end_id", &ft::GenerationConfig::token_decision_end_id)
+        .def_readwrite("token_decision_certainty_threshold",
+                       &ft::GenerationConfig::token_decision_certainty_threshold)
+        .def_readwrite("token_decision_completion_threshold",
+                       &ft::GenerationConfig::token_decision_completion_threshold)
+        .def_readwrite("token_decision_invalid_bias", &ft::GenerationConfig::token_decision_invalid_bias)
         .def("__repr__", [](const ft::GenerationConfig& c) {
             std::ostringstream oss;
             oss << c;

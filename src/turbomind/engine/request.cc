@@ -39,6 +39,13 @@ std::ostream& operator<<(std::ostream& os, const GenerationConfig& c)
     os << ", output_logprobs=" << c.output_logprobs;
     os << ", output_hidden_states=" << c.output_last_hidden_state;
     os << ", output_logits=" << c.output_logits;
+    os << ", token_decision_infer_type=" << c.token_decision_infer_type;
+    os << ", token_decision_valid_id=" << c.token_decision_valid_id;
+    os << ", token_decision_invalid_id=" << c.token_decision_invalid_id;
+    os << ", token_decision_end_id=" << c.token_decision_end_id;
+    os << ", token_decision_certainty_threshold=" << c.token_decision_certainty_threshold;
+    os << ", token_decision_completion_threshold=" << c.token_decision_completion_threshold;
+    os << ", token_decision_invalid_bias=" << c.token_decision_invalid_bias;
     os << " }";
     return os;
 }

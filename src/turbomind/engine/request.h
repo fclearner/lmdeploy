@@ -48,6 +48,14 @@ struct GenerationConfig {
     };
     int output_last_hidden_state = 0;
     int output_logits            = 0;
+
+    int   token_decision_infer_type           = -1;
+    int   token_decision_valid_id             = -1;
+    int   token_decision_invalid_id           = -1;
+    int   token_decision_end_id               = -1;
+    float token_decision_certainty_threshold  = 0.f;
+    float token_decision_completion_threshold = 0.f;
+    float token_decision_invalid_bias         = 0.f;
 };
 
 std::ostream& operator<<(std::ostream& os, const GenerationConfig& c);
@@ -197,6 +205,13 @@ void serdes(Archive& ar, GenerationConfig& g)
     ar & g.output_logprobs;
     ar & g.output_last_hidden_state;
     ar & g.output_logits;
+    ar & g.token_decision_infer_type;
+    ar & g.token_decision_valid_id;
+    ar & g.token_decision_invalid_id;
+    ar & g.token_decision_end_id;
+    ar & g.token_decision_certainty_threshold;
+    ar & g.token_decision_completion_threshold;
+    ar & g.token_decision_invalid_bias;
     // clang-format on
 }
 

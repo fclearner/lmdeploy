@@ -820,6 +820,13 @@ class TurboMindInstance:
             c.output_last_hidden_state = output_type[cfg.output_last_hidden_state]
         if cfg.output_logits:
             c.output_logits = output_type[cfg.output_logits]
+        c.token_decision_infer_type = cfg.token_decision_infer_type
+        c.token_decision_valid_id = cfg.token_decision_valid_id
+        c.token_decision_invalid_id = cfg.token_decision_invalid_id
+        c.token_decision_end_id = cfg.token_decision_end_id
+        c.token_decision_certainty_threshold = cfg.token_decision_certainty_threshold
+        c.token_decision_completion_threshold = cfg.token_decision_completion_threshold
+        c.token_decision_invalid_bias = cfg.token_decision_invalid_bias
         if cfg.logprobs:
             if cfg.logprobs > MAX_LOGPROBS:
                 cfg.logprobs = MAX_LOGPROBS

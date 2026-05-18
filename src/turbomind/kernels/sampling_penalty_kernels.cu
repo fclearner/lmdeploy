@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <float.h>
+#include <math.h>
 
 #include "src/turbomind/kernels/core/array_ops.h"
 #include "src/turbomind/kernels/core/common.h"
@@ -192,6 +193,173 @@ void ApplyRepetitionPenalty(Tensor&               logits,
             logits.data<T>(), penalties.data(), token_ids_ptrs.data(), sequence_length.data(), vocab_size, mask_size);
     };
     invoke(float{});
+}
+
+__global__ void TokenDecisionPenaltyKernel(float*       logits,
+                                           const int*   infer_types,
+                                           const int*   valid_ids,
+                                           const int*   invalid_ids,
+                                           const int*   end_ids,
+                                           const float* certainty_thresholds,
+                                           const float* completion_thresholds,
+                                           const float* invalid_biases,
+                                           int          vocab_size,
+                                           int          vocab_size_padded)
+{
+    const int bi         = blockIdx.x;
+    const int infer_type = infer_types[bi];
+    if (infer_type < 0) {
+        return;
+    }
+
+    float* row = logits + (size_t)bi * vocab_size_padded;
+
+    __shared__ float smem[256];
+    __shared__ int   forced_id;
+    __shared__ int   selected_end_id;
+    __shared__ float selected_end_logit;
+
+    if (threadIdx.x == 0) {
+        forced_id       = -1;
+        selected_end_id = -1;
+        if (infer_type > 0) {
+            const int end_id = end_ids[bi];
+            if (0 <= end_id && end_id < vocab_size) {
+                selected_end_id = end_id;
+                if (completion_thresholds[bi] <= 0.f) {
+                    forced_id = end_id;
+                }
+                else {
+                    selected_end_logit = row[end_id];
+                }
+            }
+        }
+    }
+    __syncthreads();
+
+    if (infer_type > 0) {
+        if (selected_end_id < 0) {
+            return;
+        }
+        if (forced_id < 0) {
+            float local_sum = 0.f;
+            for (int i = threadIdx.x; i < vocab_size; i += blockDim.x) {
+                const float delta = row[i] - selected_end_logit;
+                if (delta > 80.f) {
+                    local_sum = INFINITY;
+                    break;
+                }
+                if (delta > -80.f) {
+                    local_sum += expf(delta);
+                }
+            }
+            smem[threadIdx.x] = local_sum;
+            __syncthreads();
+
+            for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+                if (threadIdx.x < offset) {
+                    smem[threadIdx.x] += smem[threadIdx.x + offset];
+                }
+                __syncthreads();
+            }
+
+            if (threadIdx.x == 0) {
+                const float denom = smem[0];
+                if (denom > 0.f && isfinite(denom) && 1.f / denom > completion_thresholds[bi]) {
+                    forced_id = selected_end_id;
+                }
+            }
+            __syncthreads();
+        }
+
+        if (forced_id < 0) {
+            return;
+        }
+
+        for (int i = threadIdx.x; i < vocab_size_padded; i += blockDim.x) {
+            row[i] = i == forced_id ? 0.f : -FLT_MAX;
+        }
+        return;
+    }
+
+    float local_max = -FLT_MAX;
+    for (int i = threadIdx.x; i < vocab_size; i += blockDim.x) {
+        local_max = fmaxf(local_max, row[i]);
+    }
+    smem[threadIdx.x] = local_max;
+    __syncthreads();
+
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) {
+            smem[threadIdx.x] = fmaxf(smem[threadIdx.x], smem[threadIdx.x + offset]);
+        }
+        __syncthreads();
+    }
+    const float max_logit = smem[0];
+
+    float local_sum = 0.f;
+    for (int i = threadIdx.x; i < vocab_size; i += blockDim.x) {
+        local_sum += expf(row[i] - max_logit);
+    }
+    smem[threadIdx.x] = local_sum;
+    __syncthreads();
+
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) {
+            smem[threadIdx.x] += smem[threadIdx.x + offset];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        const float denom = smem[0];
+        if (denom > 0.f) {
+            const int valid_id   = valid_ids[bi];
+            const int invalid_id = invalid_ids[bi];
+            if (0 <= valid_id && valid_id < vocab_size && 0 <= invalid_id && invalid_id < vocab_size) {
+                const float valid_prob   = expf(row[valid_id] - max_logit) / denom;
+                const float invalid_prob = expf(row[invalid_id] - max_logit) / denom;
+                if (fmaxf(valid_prob, invalid_prob) > certainty_thresholds[bi]) {
+                    forced_id = valid_prob > invalid_prob + invalid_biases[bi] ? valid_id : invalid_id;
+                }
+            }
+        }
+    }
+    __syncthreads();
+
+    if (forced_id < 0) {
+        return;
+    }
+
+    for (int i = threadIdx.x; i < vocab_size_padded; i += blockDim.x) {
+        row[i] = i == forced_id ? 0.f : -FLT_MAX;
+    }
+}
+
+void ApplyTokenDecisionPenalty(Tensor&               logits,
+                               const Buffer_<int>&   infer_types,
+                               const Buffer_<int>&   valid_ids,
+                               const Buffer_<int>&   invalid_ids,
+                               const Buffer_<int>&   end_ids,
+                               const Buffer_<float>& certainty_thresholds,
+                               const Buffer_<float>& completion_thresholds,
+                               const Buffer_<float>& invalid_biases,
+                               int                   vocab_size,
+                               int                   vocab_size_padded,
+                               cudaStream_t          stream)
+{
+    TM_CHECK_EQ(logits.ndim(), 2);
+    const int bsz = logits.shape(0);
+    TokenDecisionPenaltyKernel<<<bsz, 256, 0, stream>>>(logits.data<float>(),
+                                                        infer_types.data(),
+                                                        valid_ids.data(),
+                                                        invalid_ids.data(),
+                                                        end_ids.data(),
+                                                        certainty_thresholds.data(),
+                                                        completion_thresholds.data(),
+                                                        invalid_biases.data(),
+                                                        vocab_size,
+                                                        vocab_size_padded);
 }
 
 template<typename T>

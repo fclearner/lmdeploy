@@ -132,6 +132,13 @@ class GenerationConfig:
     logits_processors: list[LogitsProcessor] | None = None
     output_logits: Literal['all', 'generation'] = None
     output_last_hidden_state: Literal['all', 'generation'] = None
+    token_decision_infer_type: int = -1
+    token_decision_valid_id: int = -1
+    token_decision_invalid_id: int = -1
+    token_decision_end_id: int = -1
+    token_decision_certainty_threshold: float = 0.0
+    token_decision_completion_threshold: float = 0.0
+    token_decision_invalid_bias: float = 0.0
     include_stop_str_in_output: bool = False
 
     # for disaggregation

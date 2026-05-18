@@ -29,6 +29,18 @@ void ApplyRepetitionPenalty(Tensor&               logits,
                             const Buffer_<int>&   sequence_length,
                             cudaStream_t          stream);
 
+void ApplyTokenDecisionPenalty(Tensor&               logits,
+                               const Buffer_<int>&   infer_types,
+                               const Buffer_<int>&   valid_ids,
+                               const Buffer_<int>&   invalid_ids,
+                               const Buffer_<int>&   end_ids,
+                               const Buffer_<float>& certainty_thresholds,
+                               const Buffer_<float>& completion_thresholds,
+                               const Buffer_<float>& invalid_biases,
+                               int                   vocab_size,
+                               int                   vocab_size_padded,
+                               cudaStream_t          stream);
+
 template<typename T>
 void invokeBatchApplyTemperaturePenalty_v2(T*           logits,
                                            const T*     bias,
