@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package lmdeploy.turbomind;
+
+import "google/protobuf/struct.proto";
+
+service TurboMindService {
+  rpc Generate(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc Health(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc Metrics(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc AbortRequest(google.protobuf.Struct) returns (google.protobuf.Struct);
+}
