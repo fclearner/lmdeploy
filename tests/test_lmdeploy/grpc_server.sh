@@ -41,10 +41,11 @@ export TM_GENERATION_TIMEOUT_S="${TM_GENERATION_TIMEOUT_S:-30}"
 # stable shared prefix.
 export TM_ENABLE_PREFIX_CACHING="${TM_ENABLE_PREFIX_CACHING:-0}"
 
-# Builtin logits processor defaults. Explicitly setting TM_LOGITS_PROCESSOR=""
-# must stay empty so an A/B run can prove whether logits collection is active.
-export TM_ENABLE_BUILTIN_LOGITS_PROCESSOR="${TM_ENABLE_BUILTIN_LOGITS_PROCESSOR:-1}"
-export TM_ENABLE_CPP_LOGITS_PROCESSOR="${TM_ENABLE_CPP_LOGITS_PROCESSOR:-0}"
+# Use the C++ logits processor by default. The Python builtin processor is kept
+# only for A/B debugging because it requests generation logits from TurboMind and
+# is much slower under pressure.
+export TM_ENABLE_CPP_LOGITS_PROCESSOR="${TM_ENABLE_CPP_LOGITS_PROCESSOR:-1}"
+export TM_ENABLE_BUILTIN_LOGITS_PROCESSOR="${TM_ENABLE_BUILTIN_LOGITS_PROCESSOR:-0}"
 if [[ -z "${TM_LOGITS_PROCESSOR+x}" ]]; then
   if [[ "${TM_ENABLE_CPP_LOGITS_PROCESSOR}" == "1" || "${TM_ENABLE_CPP_LOGITS_PROCESSOR}" == "true" ]]; then
     export TM_LOGITS_PROCESSOR=""
@@ -68,4 +69,5 @@ echo "[grpc-server] listen=${TM_GRPC_HOST}:${TM_GRPC_PORT}"
 echo "[grpc-server] dtype=${TM_DTYPE}"
 echo "[grpc-server] instances=${TM_MAX_INSTANCES} batch=${TM_MAX_BATCH_SIZE} admission=${TM_ADMISSION_CONCURRENCY}"
 echo "[grpc-server] prefix_caching=${TM_ENABLE_PREFIX_CACHING}"
+echo "[grpc-server] cpp_logits=${TM_ENABLE_CPP_LOGITS_PROCESSOR} python_logits=${TM_ENABLE_BUILTIN_LOGITS_PROCESSOR} logits_processor=${TM_LOGITS_PROCESSOR}"
 exec "${PYTHON_BIN}" grpc_turbomind_server.py
