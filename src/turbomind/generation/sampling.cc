@@ -36,6 +36,14 @@ struct SamplingData {
         top_p_buf = {max_batch_size, device};
         min_p_buf = {max_batch_size, device};
         kept_buf  = {max_batch_size, device};
+        token_decision_infer_type_buf           = {max_batch_size, device};
+        token_decision_valid_id_buf             = {max_batch_size, device};
+        token_decision_invalid_id_buf           = {max_batch_size, device};
+        token_decision_end_id_buf               = {max_batch_size, device};
+        token_decision_certainty_threshold_buf  = {max_batch_size, device};
+        token_decision_completion_threshold_buf = {max_batch_size, device};
+        token_decision_invalid_bias_buf         = {max_batch_size, device};
+        forced_ids_buf                          = {max_batch_size, device};
 
         sampled_logprobs = {max_batch_size * (ssize_t)kMaxLogProb, device};
         sampled_indices  = {max_batch_size * (ssize_t)kMaxLogProb, device};
@@ -50,10 +58,20 @@ struct SamplingData {
     Buffer_<int>   top_k_buf;
     Buffer_<float> top_p_buf;
     Buffer_<float> min_p_buf;
+    Buffer_<int>   token_decision_infer_type_buf;
+    Buffer_<int>   token_decision_valid_id_buf;
+    Buffer_<int>   token_decision_invalid_id_buf;
+    Buffer_<int>   token_decision_end_id_buf;
+    Buffer_<float> token_decision_certainty_threshold_buf;
+    Buffer_<float> token_decision_completion_threshold_buf;
+    Buffer_<float> token_decision_invalid_bias_buf;
+    Buffer_<int>   forced_ids_buf;
 
     Buffer_<int> kept_buf;  // kept sample
 
-    bool output_logprobs = 0;
+    bool output_logprobs     = 0;
+    bool has_token_decision  = 0;
+    bool all_token_decision  = 0;
 
     Buffer_<float> sampled_logprobs;
     Buffer_<int>   sampled_indices;
@@ -66,6 +84,13 @@ Sampling::Sampling(const BaseGenerationParam& base, int phases): BaseGenerationP
     top_p_ = {max_batch_size_, kCPUpinned};
     min_p_ = {max_batch_size_, kCPUpinned};
     kept_  = {max_batch_size_, kCPUpinned};
+    token_decision_infer_type_           = {max_batch_size_, kCPUpinned};
+    token_decision_valid_id_             = {max_batch_size_, kCPUpinned};
+    token_decision_invalid_id_           = {max_batch_size_, kCPUpinned};
+    token_decision_end_id_               = {max_batch_size_, kCPUpinned};
+    token_decision_certainty_threshold_  = {max_batch_size_, kCPUpinned};
+    token_decision_completion_threshold_ = {max_batch_size_, kCPUpinned};
+    token_decision_invalid_bias_         = {max_batch_size_, kCPUpinned};
 
     sampled_logprobs_buf_ = {max_batch_size_ * (ssize_t)kMaxLogProb, kCPUpinned};
     sampled_indices_buf_  = {max_batch_size_ * (ssize_t)kMaxLogProb, kCPUpinned};
@@ -119,21 +144,42 @@ void Sampling::Forward(int phase, TensorMap& args)
     if (d.min_topk == 0) {
         invokeSoftmax<float>(logits.data(), vocab_size_padded_, vocab_size_, bsz, d.kept_buf.data(), stream);
 
-        TopPSortParams params{};
-        params.logits            = logits.data();
-        params.sorted_logits     = logits.data();
-        params.sorted_indices    = indices.data();
-        params.kept              = d.kept_buf.data();
-        params.top_ks            = d.top_k_buf.data();
-        params.top_ps            = d.top_p_buf.data();
-        params.batch_size        = bsz;
-        params.vocab_size        = vocab_size_;
-        params.vocab_size_padded = vocab_size_padded_;
-        invokeTopPSort<float>(params, stream);
+        if (d.has_token_decision) {
+            invokeTokenDecisionFromProbs(logits.data(),
+                                         vocab_size_padded_,
+                                         vocab_size_,
+                                         bsz,
+                                         d.token_decision_infer_type_buf.data(),
+                                         d.token_decision_valid_id_buf.data(),
+                                         d.token_decision_invalid_id_buf.data(),
+                                         d.token_decision_end_id_buf.data(),
+                                         d.token_decision_certainty_threshold_buf.data(),
+                                         d.token_decision_completion_threshold_buf.data(),
+                                         d.token_decision_invalid_bias_buf.data(),
+                                         d.forced_ids_buf.data(),
+                                         d.top_k_buf.data(),
+                                         d.kept_buf.data(),
+                                         indices.data(),
+                                         stream);
+        }
+
+        if (!d.all_token_decision) {
+            TopPSortParams params{};
+            params.logits            = logits.data();
+            params.sorted_logits     = logits.data();
+            params.sorted_indices    = indices.data();
+            params.kept              = d.kept_buf.data();
+            params.top_ks            = d.top_k_buf.data();
+            params.top_ps            = d.top_p_buf.data();
+            params.batch_size        = bsz;
+            params.vocab_size        = vocab_size_;
+            params.vocab_size_padded = vocab_size_padded_;
+            invokeTopPSort<float>(params, stream);
+        }
     }
 
     // apply topp minp filter
-    if (d.max_minp != 0.f || d.min_topp != 1.f) {
+    if (!d.all_token_decision && (d.max_minp != 0.f || d.min_topp != 1.f)) {
         TopPMinPFilterParams params{};
         params.sorted_logits     = logits.data();
         params.sorted_indices    = indices.data();
@@ -157,6 +203,7 @@ void Sampling::Forward(int phase, TensorMap& args)
         params.batch_size      = bsz;
         params.output_ids      = args.at("output_ids").data<int>();  // (B, 1)
         params.sequence_length = args.at("sequence_length").data<int>();
+        params.forced_ids      = d.has_token_decision ? d.forced_ids_buf.data() : nullptr;
 
         if (d.output_logprobs) {
             params.sampled_logprobs = d.sampled_logprobs.data();
@@ -179,13 +226,42 @@ void Sampling::Setup(int phase, TensorMap& env)
 
     const auto bsz = rc.size();
 
+    auto& d = *data_.at(phase);
+    d.has_token_decision = false;
+    d.all_token_decision = true;
+
     for (int i = 0; i < bsz; ++i) {
-        top_k_[i] = rc[i]->gen_cfg.top_k;
-        top_p_[i] = rc[i]->gen_cfg.top_p;
-        min_p_[i] = rc[i]->gen_cfg.min_p;
+        const auto& g = rc[i]->gen_cfg;
+        top_k_[i] = g.top_k;
+        top_p_[i] = g.top_p;
+        min_p_[i] = g.min_p;
+
+        const bool sampling_token_decision = (g.token_decision_infer_type == 0
+                                               && g.token_decision_certainty_threshold <= 0.f)
+                                             || (g.token_decision_infer_type > 0
+                                                 && g.token_decision_completion_threshold <= 0.f);
+
+        token_decision_infer_type_[i]           = sampling_token_decision ? g.token_decision_infer_type : -1;
+        token_decision_valid_id_[i]             = g.token_decision_valid_id;
+        token_decision_invalid_id_[i]           = g.token_decision_invalid_id;
+        token_decision_end_id_[i]               = g.token_decision_end_id;
+        token_decision_certainty_threshold_[i]  = g.token_decision_certainty_threshold;
+        token_decision_completion_threshold_[i] = g.token_decision_completion_threshold;
+        token_decision_invalid_bias_[i]         = g.token_decision_invalid_bias;
+
+        if (sampling_token_decision) {
+            d.has_token_decision = true;
+            // Token decision uses full-vocabulary probabilities. For zero-threshold
+            // requests the decision always forces a token, so the row can use
+            // Sampling's existing full softmax and skip later sorting/sampling.
+            top_k_[i] = 0;
+        }
+        else {
+            d.all_token_decision = false;
+        }
     }
 
-    auto& d = *data_.at(phase);
+    d.all_token_decision = d.all_token_decision && d.has_token_decision;
 
     d.max_topk = *std::max_element(top_k_.begin(), top_k_.begin() + bsz);
     d.min_topk = *std::min_element(top_k_.begin(), top_k_.begin() + bsz);
@@ -197,6 +273,16 @@ void Sampling::Setup(int phase, TensorMap& env)
 
     copy(min_p_.data(), bsz, d.min_p_buf.data());
     copy(kept_.data(), bsz, d.kept_buf.data());
+
+    if (d.has_token_decision) {
+        copy(token_decision_infer_type_.data(), bsz, d.token_decision_infer_type_buf.data());
+        copy(token_decision_valid_id_.data(), bsz, d.token_decision_valid_id_buf.data());
+        copy(token_decision_invalid_id_.data(), bsz, d.token_decision_invalid_id_buf.data());
+        copy(token_decision_end_id_.data(), bsz, d.token_decision_end_id_buf.data());
+        copy(token_decision_certainty_threshold_.data(), bsz, d.token_decision_certainty_threshold_buf.data());
+        copy(token_decision_completion_threshold_.data(), bsz, d.token_decision_completion_threshold_buf.data());
+        copy(token_decision_invalid_bias_.data(), bsz, d.token_decision_invalid_bias_buf.data());
+    }
 
     d.output_logprobs = std::any_of(rc.begin(), rc.end(), [](auto& x) { return x->gen_cfg.output_logprobs; });
 }

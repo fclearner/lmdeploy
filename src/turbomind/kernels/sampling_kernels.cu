@@ -19,6 +19,7 @@ __global__ void sampling(const T*       logits,
                          curandState_t* curandstate,
                          int*           output_ids,
                          int*           sequence_length,
+                         const int*     forced_ids,
                          T*             sampled_logprobs,
                          int*           sampled_indexes,
                          int*           sampled_nums)
@@ -29,6 +30,20 @@ __global__ void sampling(const T*       logits,
 
     logits += stride * batch_id;
     indices += stride * batch_id;
+
+    const int forced_id = forced_ids == nullptr ? -1 : forced_ids[batch_id];
+    if (forced_id >= 0) {
+        if (tid == 0) {
+            output_ids[batch_id] = forced_id;
+            sequence_length[batch_id] += 1;
+            if (sampled_logprobs != nullptr && sampled_indexes != nullptr && sampled_nums != nullptr) {
+                sampled_logprobs[batch_id * kMaxLogProb] = 0.f;
+                sampled_indexes[batch_id * kMaxLogProb]  = forced_id;
+                sampled_nums[batch_id]                   = 1;
+            }
+        }
+        return;
+    }
 
     __shared__ float rand_num_s;
     __shared__ int   selected;
@@ -92,11 +107,93 @@ void invokeSampling(SamplingParams& params, cudaStream_t stream)
                                                    params.curandstate,
                                                    params.output_ids,
                                                    params.sequence_length,
+                                                   params.forced_ids,
                                                    (T*)params.sampled_logprobs,
                                                    params.sampled_indexes,
                                                    params.sampled_nums);
 }
 
 template void invokeSampling<float>(SamplingParams& params, cudaStream_t stream);
+
+__global__ void tokenDecisionFromProbs(float*       probs,
+                                       int          stride,
+                                       int          vocab_size,
+                                       const int*   infer_types,
+                                       const int*   valid_ids,
+                                       const int*   invalid_ids,
+                                       const int*   end_ids,
+                                       const float* certainty_thresholds,
+                                       const float* completion_thresholds,
+                                       const float* invalid_biases,
+                                       int*         forced_ids,
+                                       int*         top_ks,
+                                       int*         kept,
+                                       int*         indices)
+{
+    const int batch_id   = blockIdx.x;
+    const int infer_type = infer_types[batch_id];
+    int       forced_id  = -1;
+
+    if (infer_type == 0) {
+        const int valid_id   = valid_ids[batch_id];
+        const int invalid_id = invalid_ids[batch_id];
+        if (0 <= valid_id && valid_id < vocab_size && 0 <= invalid_id && invalid_id < vocab_size) {
+            const float valid_prob   = probs[(size_t)batch_id * stride + valid_id];
+            const float invalid_prob = probs[(size_t)batch_id * stride + invalid_id];
+            if (fmaxf(valid_prob, invalid_prob) > certainty_thresholds[batch_id]) {
+                forced_id = valid_prob > invalid_prob + invalid_biases[batch_id] ? valid_id : invalid_id;
+            }
+        }
+    }
+    else if (infer_type > 0) {
+        const int end_id = end_ids[batch_id];
+        if (0 <= end_id && end_id < vocab_size) {
+            const float end_prob = probs[(size_t)batch_id * stride + end_id];
+            if (end_prob > completion_thresholds[batch_id]) {
+                forced_id = end_id;
+            }
+        }
+    }
+
+    forced_ids[batch_id] = forced_id;
+    if (forced_id >= 0) {
+        top_ks[batch_id]                    = 1;
+        kept[batch_id]                      = 1;
+        indices[(size_t)batch_id * stride] = forced_id;
+    }
+}
+
+void invokeTokenDecisionFromProbs(float*       probs,
+                                  int          stride,
+                                  int          vocab_size,
+                                  int          batch_size,
+                                  const int*   infer_types,
+                                  const int*   valid_ids,
+                                  const int*   invalid_ids,
+                                  const int*   end_ids,
+                                  const float* certainty_thresholds,
+                                  const float* completion_thresholds,
+                                  const float* invalid_biases,
+                                  int*         forced_ids,
+                                  int*         top_ks,
+                                  int*         kept,
+                                  int*         indices,
+                                  cudaStream_t stream)
+{
+    tokenDecisionFromProbs<<<batch_size, 1, 0, stream>>>(probs,
+                                                        stride,
+                                                        vocab_size,
+                                                        infer_types,
+                                                        valid_ids,
+                                                        invalid_ids,
+                                                        end_ids,
+                                                        certainty_thresholds,
+                                                        completion_thresholds,
+                                                        invalid_biases,
+                                                        forced_ids,
+                                                        top_ks,
+                                                        kept,
+                                                        indices);
+}
 
 }  // namespace turbomind

@@ -32,6 +32,7 @@ struct SamplingParams {
     size_t         batch_size;
     int*           output_ids;
     int*           sequence_length;
+    int*           forced_ids;
     void*          sampled_logprobs;
     int*           sampled_indexes;
     int*           sampled_nums;
@@ -39,5 +40,22 @@ struct SamplingParams {
 
 template<typename T>
 void invokeSampling(SamplingParams& params, cudaStream_t stream);
+
+void invokeTokenDecisionFromProbs(float*       probs,
+                                  int          stride,
+                                  int          vocab_size,
+                                  int          batch_size,
+                                  const int*   infer_types,
+                                  const int*   valid_ids,
+                                  const int*   invalid_ids,
+                                  const int*   end_ids,
+                                  const float* certainty_thresholds,
+                                  const float* completion_thresholds,
+                                  const float* invalid_biases,
+                                  int*         forced_ids,
+                                  int*         top_ks,
+                                  int*         kept,
+                                  int*         indices,
+                                  cudaStream_t stream);
 
 }  // namespace turbomind

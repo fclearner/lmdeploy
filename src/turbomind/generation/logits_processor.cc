@@ -213,7 +213,11 @@ void LogitsProcessor::Setup(int phase, TensorMap& env)
         decision_certainty_threshold[i]  = g.token_decision_certainty_threshold;
         decision_completion_threshold[i] = g.token_decision_completion_threshold;
         decision_invalid_bias[i]         = g.token_decision_invalid_bias;
-        if (g.token_decision_infer_type >= 0) {
+        const bool sampling_token_decision = (g.token_decision_infer_type == 0
+                                               && g.token_decision_certainty_threshold <= 0.f)
+                                             || (g.token_decision_infer_type > 0
+                                                 && g.token_decision_completion_threshold <= 0.f);
+        if (g.token_decision_infer_type >= 0 && !sampling_token_decision) {
             d.has_token_decision_penalty = true;
         }
     }
