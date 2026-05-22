@@ -11,7 +11,12 @@ from grpc_turbomind_server import (
     struct_to_dict,
 )
 from turbomind_grpc_client import result_from_dict
-from turbomind_service_core import ServerConfig, TurboMindGenerationService, build_logits_processor
+from turbomind_service_core import (
+    ServerConfig,
+    TurboMindGenerationService,
+    _build_generation_config,
+    build_logits_processor,
+)
 
 
 def run(coro):
@@ -329,3 +334,33 @@ def test_cpp_logits_processor_infer_type_negative_one_is_noop():
         assert gen_config.token_decision_end_id == -1
 
     run(scenario())
+
+
+def test_generation_config_uses_greedy_knobs_when_sampling_disabled():
+    cfg = _build_generation_config({}, max_new_tokens=1, default_max_new_tokens=512)
+    assert cfg.do_sample is False
+    assert cfg.max_new_tokens == 1
+    assert cfg.top_k == 1
+    assert cfg.top_p == 1.0
+    assert cfg.min_p == 0.0
+    assert cfg.temperature == 1.0
+
+
+def test_generation_config_preserves_sampling_knobs_when_sampling_enabled():
+    cfg = _build_generation_config(
+        {
+            "do_sample": True,
+            "top_k": 32,
+            "top_p": 0.8,
+            "min_p": 0.05,
+            "temperature": 0.7,
+        },
+        max_new_tokens=None,
+        default_max_new_tokens=3,
+    )
+    assert cfg.do_sample is True
+    assert cfg.max_new_tokens == 3
+    assert cfg.top_k == 32
+    assert cfg.top_p == 0.8
+    assert cfg.min_p == 0.05
+    assert cfg.temperature == 0.7

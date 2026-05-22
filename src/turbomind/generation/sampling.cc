@@ -43,6 +43,7 @@ struct SamplingData {
         token_decision_certainty_threshold_buf  = {max_batch_size, device};
         token_decision_completion_threshold_buf = {max_batch_size, device};
         token_decision_invalid_bias_buf         = {max_batch_size, device};
+        token_decision_greedy_fallback_buf      = {max_batch_size, device};
         forced_ids_buf                          = {max_batch_size, device};
 
         sampled_logprobs = {max_batch_size * (ssize_t)kMaxLogProb, device};
@@ -65,11 +66,14 @@ struct SamplingData {
     Buffer_<float> token_decision_certainty_threshold_buf;
     Buffer_<float> token_decision_completion_threshold_buf;
     Buffer_<float> token_decision_invalid_bias_buf;
+    Buffer_<int>   token_decision_greedy_fallback_buf;
     Buffer_<int>   forced_ids_buf;
 
     Buffer_<int> kept_buf;  // kept sample
 
     bool output_logprobs     = 0;
+    bool has_greedy          = 0;
+    bool all_greedy          = 0;
     bool has_token_decision  = 0;
     bool all_token_decision  = 0;
 
@@ -91,6 +95,7 @@ Sampling::Sampling(const BaseGenerationParam& base, int phases): BaseGenerationP
     token_decision_certainty_threshold_  = {max_batch_size_, kCPUpinned};
     token_decision_completion_threshold_ = {max_batch_size_, kCPUpinned};
     token_decision_invalid_bias_         = {max_batch_size_, kCPUpinned};
+    token_decision_greedy_fallback_      = {max_batch_size_, kCPUpinned};
 
     sampled_logprobs_buf_ = {max_batch_size_ * (ssize_t)kMaxLogProb, kCPUpinned};
     sampled_indices_buf_  = {max_batch_size_ * (ssize_t)kMaxLogProb, kCPUpinned};
@@ -120,9 +125,57 @@ void Sampling::Forward(int phase, TensorMap& args)
 
     const auto bsz = logits.shape(0);
 
+    auto stream = core::Context::stream().handle();
+
+    if (d.all_greedy) {
+        invokeGreedyFromLogits(logits.data(),
+                               vocab_size_padded_,
+                               vocab_size_,
+                               bsz,
+                               args.at("output_ids").data<int>(),
+                               args.at("sequence_length").data<int>(),
+                               stream);
+        sync_check_cuda_error();
+        TM_LOG_DEBUG("{} stop", __PRETTY_FUNCTION__);
+        return;
+    }
+
     Buffer_<int> indices(bsz * vocab_size_padded_, kDEVICE);
 
-    auto stream = core::Context::stream().handle();
+    if (d.all_token_decision) {
+        invokeTokenDecisionFromLogits(logits.data(),
+                                      vocab_size_padded_,
+                                      vocab_size_,
+                                      bsz,
+                                      d.token_decision_infer_type_buf.data(),
+                                      d.token_decision_valid_id_buf.data(),
+                                      d.token_decision_invalid_id_buf.data(),
+                                      d.token_decision_end_id_buf.data(),
+                                      d.token_decision_certainty_threshold_buf.data(),
+                                      d.token_decision_completion_threshold_buf.data(),
+                                      d.token_decision_invalid_bias_buf.data(),
+                                      d.token_decision_greedy_fallback_buf.data(),
+                                      d.forced_ids_buf.data(),
+                                      d.top_k_buf.data(),
+                                      d.kept_buf.data(),
+                                      indices.data(),
+                                      stream);
+
+        SamplingParams params{};
+        params.logits          = logits.data();
+        params.stride          = vocab_size_padded_;
+        params.indices         = indices.data();
+        params.kept            = d.kept_buf.data();
+        params.curandstate     = (curandState_t*)args.at("curand_state").raw_data();
+        params.batch_size      = bsz;
+        params.output_ids      = args.at("output_ids").data<int>();  // (B, 1)
+        params.sequence_length = args.at("sequence_length").data<int>();
+        params.forced_ids      = d.forced_ids_buf.data();
+        invokeSampling<float>(params, stream);
+        sync_check_cuda_error();
+        TM_LOG_DEBUG("{} stop", __PRETTY_FUNCTION__);
+        return;
+    }
 
     // use topk sort if some request use topk filter
     if (d.max_topk > 0) {
@@ -156,6 +209,7 @@ void Sampling::Forward(int phase, TensorMap& args)
                                          d.token_decision_certainty_threshold_buf.data(),
                                          d.token_decision_completion_threshold_buf.data(),
                                          d.token_decision_invalid_bias_buf.data(),
+                                         d.token_decision_greedy_fallback_buf.data(),
                                          d.forced_ids_buf.data(),
                                          d.top_k_buf.data(),
                                          d.kept_buf.data(),
@@ -227,6 +281,9 @@ void Sampling::Setup(int phase, TensorMap& env)
     const auto bsz = rc.size();
 
     auto& d = *data_.at(phase);
+    d.output_logprobs = std::any_of(rc.begin(), rc.end(), [](auto& x) { return x->gen_cfg.output_logprobs; });
+    d.has_greedy = false;
+    d.all_greedy = true;
     d.has_token_decision = false;
     d.all_token_decision = true;
 
@@ -236,10 +293,15 @@ void Sampling::Setup(int phase, TensorMap& env)
         top_p_[i] = g.top_p;
         min_p_[i] = g.min_p;
 
-        const bool sampling_token_decision = (g.token_decision_infer_type == 0
-                                               && g.token_decision_certainty_threshold <= 0.f)
-                                             || (g.token_decision_infer_type > 0
-                                                 && g.token_decision_completion_threshold <= 0.f);
+        const bool zero_threshold_decision = (g.token_decision_infer_type == 0
+                                              && g.token_decision_certainty_threshold <= 0.f)
+                                            || (g.token_decision_infer_type > 0
+                                                && g.token_decision_completion_threshold <= 0.f);
+        const bool greedy_fallback_decision = g.token_decision_infer_type >= 0 && !zero_threshold_decision
+                                              && g.top_k <= 1 && g.top_p == 1.f && g.min_p == 0.f;
+        const bool sampling_token_decision = zero_threshold_decision || greedy_fallback_decision;
+        const bool greedy_sampling         = g.token_decision_infer_type < 0 && !d.output_logprobs && g.top_k <= 1
+                                             && g.top_p == 1.f && g.min_p == 0.f;
 
         token_decision_infer_type_[i]           = sampling_token_decision ? g.token_decision_infer_type : -1;
         token_decision_valid_id_[i]             = g.token_decision_valid_id;
@@ -248,9 +310,11 @@ void Sampling::Setup(int phase, TensorMap& env)
         token_decision_certainty_threshold_[i]  = g.token_decision_certainty_threshold;
         token_decision_completion_threshold_[i] = g.token_decision_completion_threshold;
         token_decision_invalid_bias_[i]         = g.token_decision_invalid_bias;
+        token_decision_greedy_fallback_[i]      = greedy_fallback_decision ? 1 : 0;
 
         if (sampling_token_decision) {
             d.has_token_decision = true;
+            d.all_greedy = false;
             // Token decision uses full-vocabulary probabilities. For zero-threshold
             // requests the decision always forces a token, so the row can use
             // Sampling's existing full softmax and skip later sorting/sampling.
@@ -258,10 +322,17 @@ void Sampling::Setup(int phase, TensorMap& env)
         }
         else {
             d.all_token_decision = false;
+            if (greedy_sampling) {
+                d.has_greedy = true;
+            }
+            else {
+                d.all_greedy = false;
+            }
         }
     }
 
     d.all_token_decision = d.all_token_decision && d.has_token_decision;
+    d.all_greedy         = d.all_greedy && d.has_greedy;
 
     d.max_topk = *std::max_element(top_k_.begin(), top_k_.begin() + bsz);
     d.min_topk = *std::min_element(top_k_.begin(), top_k_.begin() + bsz);
@@ -282,9 +353,8 @@ void Sampling::Setup(int phase, TensorMap& env)
         copy(token_decision_certainty_threshold_.data(), bsz, d.token_decision_certainty_threshold_buf.data());
         copy(token_decision_completion_threshold_.data(), bsz, d.token_decision_completion_threshold_buf.data());
         copy(token_decision_invalid_bias_.data(), bsz, d.token_decision_invalid_bias_buf.data());
+        copy(token_decision_greedy_fallback_.data(), bsz, d.token_decision_greedy_fallback_buf.data());
     }
-
-    d.output_logprobs = std::any_of(rc.begin(), rc.end(), [](auto& x) { return x->gen_cfg.output_logprobs; });
 }
 
 void Sampling::Fetch(int phase, TensorMap& env)

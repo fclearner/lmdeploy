@@ -35,6 +35,7 @@ private:
     Buffer_<float> token_decision_certainty_threshold_;
     Buffer_<float> token_decision_completion_threshold_;
     Buffer_<float> token_decision_invalid_bias_;
+    Buffer_<int>   token_decision_greedy_fallback_;
 
     Buffer_<float> sampled_logprobs_buf_;
     Buffer_<int>   sampled_indices_buf_;

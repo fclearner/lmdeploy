@@ -674,6 +674,13 @@ def _build_generation_config(
     allowed = {field_name for field_name in SimpleGenerationConfig.__dataclass_fields__}
     data = {key: value for key, value in payload.items() if key in allowed}
     data["max_new_tokens"] = int(max_new_tokens or data.get("max_new_tokens") or default_max_new_tokens)
+    if not bool(data.get("do_sample", False)):
+        # TurboMind does not consume do_sample directly. Preserve the user-facing
+        # greedy semantics by lowering the sampling knobs before entering C++.
+        data["top_k"] = 1
+        data["top_p"] = 1.0
+        data["min_p"] = 0.0
+        data["temperature"] = 1.0
     return SimpleGenerationConfig(**data)
 
 

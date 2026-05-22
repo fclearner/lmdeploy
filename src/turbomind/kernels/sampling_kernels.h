@@ -41,6 +41,32 @@ struct SamplingParams {
 template<typename T>
 void invokeSampling(SamplingParams& params, cudaStream_t stream);
 
+void invokeGreedyFromLogits(float*       logits,
+                            int          stride,
+                            int          vocab_size,
+                            int          batch_size,
+                            int*         output_ids,
+                            int*         sequence_length,
+                            cudaStream_t stream);
+
+void invokeTokenDecisionFromLogits(float*       logits,
+                                   int          stride,
+                                   int          vocab_size,
+                                   int          batch_size,
+                                   const int*   infer_types,
+                                   const int*   valid_ids,
+                                   const int*   invalid_ids,
+                                   const int*   end_ids,
+                                   const float* certainty_thresholds,
+                                   const float* completion_thresholds,
+                                   const float* invalid_biases,
+                                   const int*   greedy_fallbacks,
+                                   int*         forced_ids,
+                                   int*         top_ks,
+                                   int*         kept,
+                                   int*         indices,
+                                   cudaStream_t stream);
+
 void invokeTokenDecisionFromProbs(float*       probs,
                                   int          stride,
                                   int          vocab_size,
@@ -52,6 +78,7 @@ void invokeTokenDecisionFromProbs(float*       probs,
                                   const float* certainty_thresholds,
                                   const float* completion_thresholds,
                                   const float* invalid_biases,
+                                  const int*   greedy_fallbacks,
                                   int*         forced_ids,
                                   int*         top_ks,
                                   int*         kept,
