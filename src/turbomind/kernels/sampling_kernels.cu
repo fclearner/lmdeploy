@@ -186,6 +186,36 @@ __global__ void tokenDecisionFromLogits(const float* logits,
 {
     const int    batch_id = blockIdx.x;
     const size_t row      = (size_t)batch_id * stride;
+    const int    infer_type = infer_types[batch_id];
+
+    const bool direct_completion = infer_type > 0 && completion_thresholds[batch_id] <= 0.f;
+    const bool direct_validity   = infer_type == 0 && certainty_thresholds[batch_id] <= 0.f
+                                 && invalid_biases[batch_id] == 0.f;
+    if (direct_completion || direct_validity) {
+        if (threadIdx.x == 0) {
+            int forced_id = -1;
+            if (direct_completion) {
+                const int end_id = end_ids[batch_id];
+                if (0 <= end_id && end_id < vocab_size) {
+                    forced_id = end_id;
+                }
+            }
+            else {
+                const int valid_id   = valid_ids[batch_id];
+                const int invalid_id = invalid_ids[batch_id];
+                if (0 <= valid_id && valid_id < vocab_size && 0 <= invalid_id && invalid_id < vocab_size) {
+                    forced_id = logits[row + valid_id] > logits[row + invalid_id] ? valid_id : invalid_id;
+                }
+            }
+            forced_ids[batch_id] = forced_id;
+            if (forced_id >= 0) {
+                top_ks[batch_id] = 1;
+                kept[batch_id]   = 1;
+                indices[row]     = forced_id;
+            }
+        }
+        return;
+    }
 
     __shared__ float max_logits[256];
     __shared__ int   max_ids[256];
@@ -231,9 +261,8 @@ __global__ void tokenDecisionFromLogits(const float* logits,
     }
 
     if (threadIdx.x == 0) {
-        const int   infer_type = infer_types[batch_id];
-        const float denom      = sum_exps[0];
-        int         forced_id  = -1;
+        const float denom     = sum_exps[0];
+        int         forced_id = -1;
 
         if (infer_type == 0) {
             const int valid_id   = valid_ids[batch_id];

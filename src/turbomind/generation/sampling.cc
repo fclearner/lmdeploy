@@ -293,8 +293,10 @@ void Sampling::Setup(int phase, TensorMap& env)
         top_p_[i] = g.top_p;
         min_p_[i] = g.min_p;
 
-        const bool zero_threshold_decision = (g.token_decision_infer_type == 0
-                                              && g.token_decision_certainty_threshold <= 0.f)
+        const bool direct_validity_decision = (g.token_decision_infer_type == 0
+                                               && g.token_decision_certainty_threshold <= 0.f
+                                               && g.token_decision_invalid_bias == 0.f);
+        const bool zero_threshold_decision = direct_validity_decision
                                             || (g.token_decision_infer_type > 0
                                                 && g.token_decision_completion_threshold <= 0.f);
         const bool greedy_fallback_decision = g.token_decision_infer_type >= 0 && !zero_threshold_decision
@@ -310,7 +312,7 @@ void Sampling::Setup(int phase, TensorMap& env)
         token_decision_certainty_threshold_[i]  = g.token_decision_certainty_threshold;
         token_decision_completion_threshold_[i] = g.token_decision_completion_threshold;
         token_decision_invalid_bias_[i]         = g.token_decision_invalid_bias;
-        token_decision_greedy_fallback_[i]      = greedy_fallback_decision ? 1 : 0;
+        token_decision_greedy_fallback_[i]      = (greedy_fallback_decision || direct_validity_decision) ? 1 : 0;
 
         if (sampling_token_decision) {
             d.has_token_decision = true;

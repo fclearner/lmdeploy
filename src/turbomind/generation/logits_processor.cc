@@ -214,7 +214,8 @@ void LogitsProcessor::Setup(int phase, TensorMap& env)
         decision_completion_threshold[i] = g.token_decision_completion_threshold;
         decision_invalid_bias[i]         = g.token_decision_invalid_bias;
         const bool zero_threshold_decision = (g.token_decision_infer_type == 0
-                                              && g.token_decision_certainty_threshold <= 0.f)
+                                              && g.token_decision_certainty_threshold <= 0.f
+                                              && g.token_decision_invalid_bias == 0.f)
                                             || (g.token_decision_infer_type > 0
                                                 && g.token_decision_completion_threshold <= 0.f);
         const bool greedy_fallback_decision = g.token_decision_infer_type >= 0 && !zero_threshold_decision
