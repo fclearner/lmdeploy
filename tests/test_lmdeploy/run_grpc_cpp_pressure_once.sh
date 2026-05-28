@@ -52,6 +52,10 @@ MIN_CHARS="${MIN_CHARS:-32}"
 MAX_CHARS="${MAX_CHARS:-256}"
 INFER_TYPES="${INFER_TYPES:--1,1}"
 EXPECTED_TOKEN_ID="${EXPECTED_TOKEN_ID:-}"
+TOP_SLOW="${TOP_SLOW:-0}"
+RATE_QPS="${RATE_QPS:-0}"
+PHASE_GAP_SEC="${PHASE_GAP_SEC:-0}"
+CHANNEL_READY_TIMEOUT_SEC="${CHANNEL_READY_TIMEOUT_SEC:-10}"
 
 rm -f "${LOG_FILE}"
 "${PYTHON_BIN}" grpc_turbomind_server.py >"${LOG_FILE}" 2>&1 &
@@ -65,6 +69,7 @@ trap cleanup EXIT
 
 for _ in $(seq 1 120); do
   if "${PYTHON_BIN}" tests/test_lmdeploy/grpc_client_pressure.py \
+      --target "127.0.0.1:${TM_GRPC_PORT}" \
       --requests 1 \
       --concurrency 1 \
       --warmup 0 \
@@ -102,7 +107,11 @@ fi
   --warmup "${WARMUP}" \
   --infer-types="${INFER_TYPES}" \
   --repeat "${REPEAT}" \
+  --rate-qps "${RATE_QPS}" \
   --min-chars "${MIN_CHARS}" \
   --max-chars "${MAX_CHARS}" \
+  --top-slow "${TOP_SLOW}" \
+  --phase-gap-sec "${PHASE_GAP_SEC}" \
+  --channel-ready-timeout-sec "${CHANNEL_READY_TIMEOUT_SEC}" \
   --timeout-sec 120 \
   --health
