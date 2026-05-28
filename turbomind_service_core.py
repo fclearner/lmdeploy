@@ -299,6 +299,26 @@ class TurboMindGenerationService:
             self.stats.validation_errors += 1
             return _error_result(request_id, "bad_request", 400, "prompt must be a non-empty string")
 
+        if self.config.enable_cpp_logits_processor and infer_type >= 0:
+            request_config = generation_config if isinstance(generation_config, dict) else {}
+            missing = [
+                env_name
+                for env_name, request_name in (
+                    ("valid_id", "token_decision_valid_id"),
+                    ("invalid_id", "token_decision_invalid_id"),
+                    ("end_id", "token_decision_end_id"),
+                )
+                if getattr(self.config, env_name) is None and request_config.get(request_name) is None
+            ]
+            if missing:
+                self.stats.validation_errors += 1
+                return _error_result(
+                    request_id,
+                    "bad_request",
+                    400,
+                    "cpp logits processor requires: " + ", ".join(missing),
+                )
+
         should_abort = should_abort or (lambda: False)
         async with self._active_lock:
             if request_id in self._active:
@@ -326,18 +346,12 @@ class TurboMindGenerationService:
             if self.config.enable_cpp_logits_processor and infer_type >= 0:
                 generation_config = dict(generation_config or {})
                 generation_config.setdefault("token_decision_infer_type", int(infer_type))
-                generation_config.setdefault(
-                    "token_decision_valid_id",
-                    int(self.config.valid_id if self.config.valid_id is not None else -1),
-                )
-                generation_config.setdefault(
-                    "token_decision_invalid_id",
-                    int(self.config.invalid_id if self.config.invalid_id is not None else -1),
-                )
-                generation_config.setdefault(
-                    "token_decision_end_id",
-                    int(self.config.end_id if self.config.end_id is not None else -1),
-                )
+                if "token_decision_valid_id" not in generation_config:
+                    generation_config["token_decision_valid_id"] = int(self.config.valid_id)
+                if "token_decision_invalid_id" not in generation_config:
+                    generation_config["token_decision_invalid_id"] = int(self.config.invalid_id)
+                if "token_decision_end_id" not in generation_config:
+                    generation_config["token_decision_end_id"] = int(self.config.end_id)
                 generation_config.setdefault(
                     "token_decision_certainty_threshold",
                     float(self.config.certainty_threshold),

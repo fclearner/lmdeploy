@@ -83,6 +83,8 @@ class Counters:
     server_total_ms: list[float] = field(default_factory=list)
     grpc_handler_ms: list[float] = field(default_factory=list)
     grpc_pre_handler_ms: list[float] = field(default_factory=list)
+    dedicated_model_submit_delay_ms: list[float] = field(default_factory=list)
+    dedicated_model_loop_ms: list[float] = field(default_factory=list)
     client_minus_server_ms: list[float] = field(default_factory=list)
     logits_processor_ms: list[float] = field(default_factory=list)
     logits_enabled: int = 0
@@ -194,6 +196,8 @@ def record_response(counters: Counters, item: WorkItem, body: dict[str, Any], la
         ("total_time_s", counters.server_total_ms),
         ("grpc_pre_handler_delay_s", counters.grpc_pre_handler_ms),
         ("grpc_handler_time_s", counters.grpc_handler_ms),
+        ("dedicated_model_submit_delay_s", counters.dedicated_model_submit_delay_ms),
+        ("dedicated_model_loop_time_s", counters.dedicated_model_loop_ms),
         ("logits_processor_time_s", counters.logits_processor_ms),
     ]:
         value = perf_ms(perf, key)
@@ -306,6 +310,8 @@ def print_summary(name: str, counters: Counters, elapsed_sec: float) -> None:
         "  transport  "
         f"pre_handler_p95={fmt(percentile(counters.grpc_pre_handler_ms, 0.95))} "
         f"handler_p95={fmt(percentile(counters.grpc_handler_ms, 0.95))} "
+        f"dedicated_submit_p95={fmt(percentile(counters.dedicated_model_submit_delay_ms, 0.95))} "
+        f"dedicated_loop_p95={fmt(percentile(counters.dedicated_model_loop_ms, 0.95))} "
         f"client_minus_server_p50={fmt(percentile(counters.client_minus_server_ms, 0.50))} "
         f"client_minus_server_p95={fmt(percentile(counters.client_minus_server_ms, 0.95))}"
     )

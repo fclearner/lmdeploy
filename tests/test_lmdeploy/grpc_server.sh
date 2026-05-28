@@ -36,6 +36,7 @@ export TM_CUDA_STREAMS="${TM_CUDA_STREAMS:-${TM_ADMISSION_CONCURRENCY}}"
 export TM_MAX_QUEUE_SIZE="${TM_MAX_QUEUE_SIZE:-128}"
 export TM_QUEUE_TIMEOUT_S="${TM_QUEUE_TIMEOUT_S:-5}"
 export TM_GENERATION_TIMEOUT_S="${TM_GENERATION_TIMEOUT_S:-30}"
+export TM_GRPC_DEDICATED_MODEL_LOOP="${TM_GRPC_DEDICATED_MODEL_LOOP:-0}"
 # Random pressure tests usually do not benefit from prefix caching and can show
 # extra BlockTrie variance. Enable it explicitly for production prompts with a
 # stable shared prefix.
@@ -68,6 +69,7 @@ echo "[grpc-server] model=${TM_MODEL_PATH}"
 echo "[grpc-server] listen=${TM_GRPC_HOST}:${TM_GRPC_PORT}"
 echo "[grpc-server] dtype=${TM_DTYPE}"
 echo "[grpc-server] instances=${TM_MAX_INSTANCES} batch=${TM_MAX_BATCH_SIZE} admission=${TM_ADMISSION_CONCURRENCY}"
+echo "[grpc-server] dedicated_model_loop=${TM_GRPC_DEDICATED_MODEL_LOOP}"
 echo "[grpc-server] prefix_caching=${TM_ENABLE_PREFIX_CACHING}"
 echo "[grpc-server] cpp_logits=${TM_ENABLE_CPP_LOGITS_PROCESSOR} python_logits=${TM_ENABLE_BUILTIN_LOGITS_PROCESSOR} logits_processor=${TM_LOGITS_PROCESSOR}"
 exec "${PYTHON_BIN}" grpc_turbomind_server.py

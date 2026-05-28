@@ -107,6 +107,13 @@ class LoopBoundFakeService:
         return 1
 
 
+class TimedLoopFakeService:
+
+    async def generate(self, prompt, **kwargs):
+        await asyncio.sleep(0)
+        return SimpleNamespace(extra_performance={})
+
+
 class WarmupFakeService:
 
     def __init__(self):
@@ -225,6 +232,26 @@ def test_dedicated_model_loop_runs_service_off_grpc_loop():
     run(scenario())
 
 
+def test_dedicated_model_loop_adds_submit_metrics():
+    proxy = DedicatedModelLoopService(TimedLoopFakeService())
+
+    async def scenario():
+        result = await proxy.generate("hello", request_id="req-1")
+        await proxy.close()
+        perf = result.extra_performance
+        assert "dedicated_model_submit_delay_s" in perf
+        assert "dedicated_model_loop_time_s" in perf
+        assert perf["dedicated_model_submit_delay_s"] >= 0
+        assert perf["dedicated_model_loop_time_s"] >= 0
+
+    run(scenario())
+
+
+def test_grpc_dedicated_model_loop_defaults_to_false(monkeypatch):
+    monkeypatch.delenv("TM_GRPC_DEDICATED_MODEL_LOOP", raising=False)
+    assert GrpcServerConfig.from_env().grpc_dedicated_model_loop is False
+
+
 def test_startup_warmup_runs_configured_synthetic_requests():
     service = WarmupFakeService()
     config = GrpcServerConfig(
@@ -305,6 +332,56 @@ def test_cpp_logits_processor_sets_generation_config_without_output_logits():
         assert gen_config.token_decision_certainty_threshold == 0.7
         assert gen_config.token_decision_completion_threshold == 0.8
         assert gen_config.token_decision_invalid_bias == 0.05
+
+    run(scenario())
+
+
+def test_cpp_logits_processor_rejects_missing_token_decision_ids():
+    instance = CppProcessorFakeInstance()
+    config = ServerConfig(
+        max_instances=1,
+        enable_cpp_logits_processor=True,
+    )
+    service = TurboMindGenerationService(CppProcessorFakeModel(instance), config)
+
+    async def scenario():
+        result = await service.generate("hello", infer_type=1, max_new_tokens=1)
+        assert not result.ok
+        assert result.status_code == 400
+        assert result.status == "bad_request"
+        assert "valid_id" in result.error
+        assert "invalid_id" in result.error
+        assert "end_id" in result.error
+
+    run(scenario())
+
+
+def test_cpp_logits_processor_accepts_request_token_decision_ids_without_env_ids():
+    instance = CppProcessorFakeInstance()
+    config = ServerConfig(
+        max_instances=1,
+        enable_cpp_logits_processor=True,
+    )
+    service = TurboMindGenerationService(CppProcessorFakeModel(instance), config)
+
+    async def scenario():
+        await service.start()
+        result = await service.generate(
+            "hello",
+            infer_type=1,
+            max_new_tokens=1,
+            generation_config={
+                "token_decision_valid_id": 123,
+                "token_decision_invalid_id": 456,
+                "token_decision_end_id": 789,
+            },
+        )
+        assert result.ok
+        gen_config = instance.gen_config
+        assert gen_config.token_decision_infer_type == 1
+        assert gen_config.token_decision_valid_id == 123
+        assert gen_config.token_decision_invalid_id == 456
+        assert gen_config.token_decision_end_id == 789
 
     run(scenario())
 

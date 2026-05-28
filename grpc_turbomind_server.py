@@ -51,7 +51,7 @@ class GrpcServerConfig(ServerConfig):
     grpc_max_concurrent_streams: int = 1024
     grpc_loop_lag_interval_s: float = 0.01
     grpc_loop_lag_window_s: float = 1.0
-    grpc_dedicated_model_loop: bool = True
+    grpc_dedicated_model_loop: bool = False
     grpc_serde_thread_workers: int = 0
     startup_warmup_requests: int = 0
     startup_warmup_concurrency: int = 8
@@ -80,7 +80,7 @@ class GrpcServerConfig(ServerConfig):
             grpc_max_concurrent_streams=int(os.getenv("TM_GRPC_MAX_CONCURRENT_STREAMS", "1024")),
             grpc_loop_lag_interval_s=float(os.getenv("TM_GRPC_LOOP_LAG_INTERVAL_S", "0.01")),
             grpc_loop_lag_window_s=float(os.getenv("TM_GRPC_LOOP_LAG_WINDOW_S", "1.0")),
-            grpc_dedicated_model_loop=_env_bool("TM_GRPC_DEDICATED_MODEL_LOOP", True),
+            grpc_dedicated_model_loop=_env_bool("TM_GRPC_DEDICATED_MODEL_LOOP", False),
             grpc_serde_thread_workers=int(os.getenv("TM_GRPC_SERDE_THREAD_WORKERS", "0")),
             startup_warmup_requests=int(os.getenv("TM_STARTUP_WARMUP_REQUESTS", "0")),
             startup_warmup_concurrency=int(os.getenv("TM_STARTUP_WARMUP_CONCURRENCY", "8")),
@@ -165,9 +165,19 @@ class DedicatedModelLoopService:
             self._thread.join(timeout=5)
 
     async def generate(self, *args: Any, **kwargs: Any) -> Any:
+        submitted = time.monotonic()
+
         async def do_generate() -> Any:
+            model_loop_started = time.monotonic()
             service = await self._ensure_service()
-            return await service.generate(*args, **kwargs)
+            result = await service.generate(*args, **kwargs)
+            model_loop_time_s = time.monotonic() - model_loop_started
+            submit_delay_s = model_loop_started - submitted
+            extra = getattr(result, "extra_performance", None)
+            if isinstance(extra, dict):
+                extra["dedicated_model_submit_delay_s"] = round(submit_delay_s, 6)
+                extra["dedicated_model_loop_time_s"] = round(model_loop_time_s, 6)
+            return result
 
         return await self._submit(do_generate())
 
