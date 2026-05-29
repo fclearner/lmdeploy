@@ -27,7 +27,7 @@ wheel, but a V100 or T4 is required for final runtime validation.
 ```bash
 PYTHON_BIN=python3.10 \
 CUDA_VERSION=12.4 \
-CMAKE_CUDA_ARCHITECTURES='70-real;75-real' \
+LMDEPLOY_CUDA_ARCHITECTURES='70-real;75-real' \
 TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124 \
 bash builder/offline_wheel/build_offline_bundle.sh
 ```
@@ -66,7 +66,7 @@ offline environment already has an internal pip source:
 ```bash
 PYTHON_BIN=python3.10 \
 CUDA_VERSION=12.2 \
-CMAKE_CUDA_ARCHITECTURES='70-real;75-real' \
+LMDEPLOY_CUDA_ARCHITECTURES='70-real;75-real' \
 bash builder/offline_wheel/build_offline_source_bundle.sh
 ```
 
@@ -123,6 +123,11 @@ is not already configured.
 If the environment already exports a full toolkit version such as
 `CUDA_VERSION=12.2.2.009`, the scripts normalize it to `12.2` before checking
 `nvcc --version` and naming the bundle.
+
+The build scripts intentionally ignore any pre-existing
+`CMAKE_CUDA_ARCHITECTURES` or `CUDAARCHS` in the environment and set them from
+`LMDEPLOY_CUDA_ARCHITECTURES`, defaulting to `70-real;75-real`. This prevents a
+V100-only environment from accidentally producing a wheel without `sm_75`.
 
 If you still need a fully self-contained source-build bundle with pip wheels,
 set `INCLUDE_WHEELHOUSE=1` and, when needed, provide `TORCH_INDEX_URL`.

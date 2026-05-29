@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,16 +28,32 @@ def find_extension(lib_dir: Path, prefix: str) -> Path:
     return candidates[0]
 
 
+def expected_cuda_arches() -> tuple[str, ...]:
+    spec = os.getenv("LMDEPLOY_EXPECTED_CUDA_ARCHS", "sm_70,sm_75")
+    arches = []
+    for item in re.split(r"[,;:\s]+", spec):
+        if not item:
+            continue
+        match = re.search(r"(\d+)", item)
+        if not match:
+            continue
+        arch = match.group(1)
+        if len(arch) == 2:
+            arches.append(f"sm_{arch}")
+    return tuple(dict.fromkeys(arches))
+
+
 def verify_cuda_arches(turbomind_so: Path) -> None:
     cuobjdump = shutil.which("cuobjdump")
     if cuobjdump is None:
         print("skip cuda arch check: cuobjdump not found")
         return
     output = subprocess.check_output([cuobjdump, "--list-elf", str(turbomind_so)], text=True)
-    missing = [arch for arch in ("sm_70", "sm_75") if arch not in output]
+    expected = expected_cuda_arches()
+    missing = [arch for arch in expected if arch not in output]
     if missing:
         raise RuntimeError(f"{turbomind_so} does not contain expected CUDA archs: {missing}")
-    print("ok cuda archs: sm_70 sm_75")
+    print(f"ok cuda archs: {' '.join(expected)}")
 
 
 def main() -> None:
