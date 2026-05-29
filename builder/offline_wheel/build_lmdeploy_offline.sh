@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3.10}"
-CUDA_VERSION="${CUDA_VERSION:-12.2}"
+CUDA_VERSION_RAW="${CUDA_VERSION:-12.2}"
+CUDA_VERSION="$(printf '%s\n' "${CUDA_VERSION_RAW}" | sed -E 's/^([0-9]+)\.([0-9]+).*/\1.\2/')"
 CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES:-70-real;75-real}"
 BUILD_ROOT="${BUILD_ROOT:-${SCRIPT_DIR}/build_src}"
 DIST_DIR="${DIST_DIR:-${SCRIPT_DIR}/dist}"

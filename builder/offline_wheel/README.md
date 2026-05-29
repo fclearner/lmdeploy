@@ -120,6 +120,10 @@ through the active pip configuration. Set `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`
 or the target environment's pip config before running it if the internal source
 is not already configured.
 
+If the environment already exports a full toolkit version such as
+`CUDA_VERSION=12.2.2.009`, the scripts normalize it to `12.2` before checking
+`nvcc --version` and naming the bundle.
+
 If you still need a fully self-contained source-build bundle with pip wheels,
 set `INCLUDE_WHEELHOUSE=1` and, when needed, provide `TORCH_INDEX_URL`.
 
