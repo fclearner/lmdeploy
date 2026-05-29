@@ -1,4 +1,4 @@
-# LMDeploy Offline Wheel Bundle
+# LMDeploy Offline Build And Wheel Bundles
 
 This builder targets the requested production shape:
 
@@ -8,7 +8,15 @@ This builder targets the requested production shape:
 - LMDeploy TurboMind enabled
 - Sanic and gRPC serving dependencies included in the offline wheelhouse
 
-## Build On An Online CUDA 12.4 Machine
+There are two bundle modes:
+
+- `build_offline_bundle.sh`: build the LMDeploy wheel on the online machine,
+  then install that prebuilt wheel offline.
+- `build_offline_source_bundle.sh`: prepare a pip wheelhouse, source archive
+  and CMake third-party sources so the offline machine can compile LMDeploy
+  itself.
+
+## Build Prebuilt Wheel Bundle On An Online CUDA 12.4 Machine
 
 Use a Linux x86_64 host with Python 3.10, CUDA toolkit 12.4, `nvcc`, CMake,
 Ninja and a working compiler toolchain. A GPU is not required to compile the
@@ -46,6 +54,65 @@ If a dependency has no binary wheel for Python 3.10 on your platform, the build
 script fails by default. That is intentional for offline deployment. You can set
 `ONLY_BINARY=0` only if you also plan to support source builds on the offline
 target, which is not recommended for production rollout.
+
+## Build Offline Source-Compile Bundle
+
+Use this mode when the target environment must compile LMDeploy offline rather
+than install a prebuilt LMDeploy wheel:
+
+```bash
+PYTHON_BIN=python3.10 \
+CUDA_VERSION=12.4 \
+CMAKE_CUDA_ARCHITECTURES='70-real;75-real' \
+TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124 \
+bash builder/offline_wheel/build_offline_source_bundle.sh
+```
+
+The bundle is written to:
+
+```text
+offline_dist/lmdeploy-<version>-source-build-py310-cu124-sm70-sm75/
+offline_dist/lmdeploy-<version>-source-build-py310-cu124-sm70-sm75.tar.gz
+```
+
+The important files are:
+
+```text
+source/lmdeploy-source.tar.gz
+third_party/fmt/
+third_party/Catch2/
+third_party/repo-cutlass/
+third_party/yaml-cpp/
+third_party/xgrammar/
+third_party/gloo/
+third_party/concurrentqueue/
+wheelhouse/*.whl
+requirements/offline_build.txt
+requirements/offline_install.txt
+build_lmdeploy_offline.sh
+install_offline.sh
+verify_install.py
+build_info.txt
+SHA256SUMS
+```
+
+This bundle includes the CMake `FetchContent` dependencies used by TurboMind, so
+offline compilation does not need GitHub access for `fmt`, `cutlass`,
+`yaml-cpp`, `xgrammar`, `gloo`, `concurrentqueue`, or `Catch2`.
+
+On the offline machine, unpack the tarball and compile:
+
+```bash
+tar -xzf lmdeploy-<version>-source-build-py310-cu124-sm70-sm75.tar.gz
+cd lmdeploy-<version>-source-build-py310-cu124-sm70-sm75
+PYTHON_BIN=python3.10 bash build_lmdeploy_offline.sh
+```
+
+To compile and install into the active environment in one step:
+
+```bash
+PYTHON_BIN=python3.10 INSTALL_AFTER_BUILD=1 bash build_lmdeploy_offline.sh
+```
 
 ## Install Offline
 

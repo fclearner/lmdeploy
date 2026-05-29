@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -60,6 +61,13 @@ def get_cmake_cuda_architectures_option():
     if not cuda_architectures:
         return []
     return [f'-DCMAKE_CUDA_ARCHITECTURES={cuda_architectures}']
+
+
+def get_extra_cmake_options():
+    extra_options = os.getenv('LMDEPLOY_EXTRA_CMAKE_ARGS')
+    if not extra_options:
+        return []
+    return shlex.split(extra_options)
 
 
 def parse_requirements(fname='requirements.txt', with_version=True):
@@ -156,7 +164,7 @@ if get_target_device() == 'cuda' and os.getenv('DISABLE_TURBOMIND', '').lower() 
                 '-DBUILD_PY_FFI=ON',
                 '-DBUILD_MULTI_GPU=' + ('OFF' if os.name == 'nt' else 'ON'),
                 '-DUSE_NVTX=' + ('OFF' if os.name == 'nt' else 'ON'),
-            ] + get_cmake_cuda_architectures_option(),
+            ] + get_cmake_cuda_architectures_option() + get_extra_cmake_options(),
         ),
     ]
     extra_deps = get_turbomind_deps()
