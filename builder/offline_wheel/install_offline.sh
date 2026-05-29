@@ -18,6 +18,11 @@ if [[ "${#wheels[@]}" -ne 1 ]]; then
   exit 1
 fi
 
-"${PYTHON_BIN}" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -r "${REQ_FILE}"
-"${PYTHON_BIN}" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-deps "${wheels[0]}"
+pip_args=()
+if compgen -G "${WHEELHOUSE_DIR}/*.whl" >/dev/null; then
+  pip_args=(--no-index --find-links "${WHEELHOUSE_DIR}")
+fi
+
+"${PYTHON_BIN}" -m pip install "${pip_args[@]}" -r "${REQ_FILE}"
+"${PYTHON_BIN}" -m pip install "${pip_args[@]}" --no-deps "${wheels[0]}"
 "${PYTHON_BIN}" "${SCRIPT_DIR}/verify_install.py"

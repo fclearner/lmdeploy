@@ -3,18 +3,20 @@
 This builder targets the requested production shape:
 
 - Python 3.10
-- CUDA 12.4
+- CUDA 12.2 for source compilation in the target environment
 - V100 + T4, compiled as `sm_70` and `sm_75`
 - LMDeploy TurboMind enabled
-- Sanic and gRPC serving dependencies included in the offline wheelhouse
+- Sanic and gRPC serving dependencies installed through the target pip source,
+  or included in the wheelhouse when `INCLUDE_WHEELHOUSE=1`
 
 There are two bundle modes:
 
 - `build_offline_bundle.sh`: build the LMDeploy wheel on the online machine,
   then install that prebuilt wheel offline.
-- `build_offline_source_bundle.sh`: prepare a pip wheelhouse, source archive
-  and CMake third-party sources so the offline machine can compile LMDeploy
-  itself.
+- `build_offline_source_bundle.sh`: prepare a lightweight source archive and
+  CMake third-party sources so the offline machine can compile LMDeploy itself.
+  It does not include a pip wheelhouse by default and uses the target
+  environment's configured pip source.
 
 ## Build Prebuilt Wheel Bundle On An Online CUDA 12.4 Machine
 
@@ -55,24 +57,24 @@ script fails by default. That is intentional for offline deployment. You can set
 `ONLY_BINARY=0` only if you also plan to support source builds on the offline
 target, which is not recommended for production rollout.
 
-## Build Offline Source-Compile Bundle
+## Build Lightweight Offline Source-Compile Bundle
 
 Use this mode when the target environment must compile LMDeploy offline rather
-than install a prebuilt LMDeploy wheel:
+than install a prebuilt LMDeploy wheel. This is the recommended mode when the
+offline environment already has an internal pip source:
 
 ```bash
 PYTHON_BIN=python3.10 \
-CUDA_VERSION=12.4 \
+CUDA_VERSION=12.2 \
 CMAKE_CUDA_ARCHITECTURES='70-real;75-real' \
-TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124 \
 bash builder/offline_wheel/build_offline_source_bundle.sh
 ```
 
 The bundle is written to:
 
 ```text
-offline_dist/lmdeploy-<version>-source-build-py310-cu124-sm70-sm75/
-offline_dist/lmdeploy-<version>-source-build-py310-cu124-sm70-sm75.tar.gz
+offline_dist/lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75/
+offline_dist/lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75.tar.gz
 ```
 
 The important files are:
@@ -86,7 +88,6 @@ third_party/yaml-cpp/
 third_party/xgrammar/
 third_party/gloo/
 third_party/concurrentqueue/
-wheelhouse/*.whl
 requirements/offline_build.txt
 requirements/offline_install.txt
 build_lmdeploy_offline.sh
@@ -103,8 +104,8 @@ offline compilation does not need GitHub access for `fmt`, `cutlass`,
 On the offline machine, unpack the tarball and compile:
 
 ```bash
-tar -xzf lmdeploy-<version>-source-build-py310-cu124-sm70-sm75.tar.gz
-cd lmdeploy-<version>-source-build-py310-cu124-sm70-sm75
+tar -xzf lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75.tar.gz
+cd lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75
 PYTHON_BIN=python3.10 bash build_lmdeploy_offline.sh
 ```
 
@@ -114,6 +115,14 @@ To compile and install into the active environment in one step:
 PYTHON_BIN=python3.10 INSTALL_AFTER_BUILD=1 bash build_lmdeploy_offline.sh
 ```
 
+`build_lmdeploy_offline.sh` installs build and runtime Python dependencies
+through the active pip configuration. Set `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`
+or the target environment's pip config before running it if the internal source
+is not already configured.
+
+If you still need a fully self-contained source-build bundle with pip wheels,
+set `INCLUDE_WHEELHOUSE=1` and, when needed, provide `TORCH_INDEX_URL`.
+
 ## Install Offline
 
 Copy the whole bundle directory to the target machine, then run:
@@ -122,17 +131,10 @@ Copy the whole bundle directory to the target machine, then run:
 PYTHON_BIN=python3.10 bash install_offline.sh
 ```
 
-The install script uses only:
-
-```bash
---no-index --find-links wheelhouse
-```
-
-It installs the PyTorch CUDA 12.4 wheel, LMDeploy runtime dependencies,
-Sanic/gRPC serving dependencies, then the local LMDeploy wheel. The bundle pins
-`torch==2.6.0+cu124` and
-`torchvision==0.21.0+cu124` to avoid accidentally resolving a non-CUDA-12.4
-PyTorch wheel.
+The install script uses `wheelhouse/` with `--no-index --find-links` when local
+wheels are present. In the lightweight source-build bundle there is no
+wheelhouse by default, so it uses the active pip configuration and installs the
+local LMDeploy wheel from `dist/`.
 
 ## Verify Runtime
 

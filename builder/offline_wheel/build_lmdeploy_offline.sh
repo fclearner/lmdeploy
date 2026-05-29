@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3.10}"
-CUDA_VERSION="${CUDA_VERSION:-12.4}"
+CUDA_VERSION="${CUDA_VERSION:-12.2}"
 CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES:-70-real;75-real}"
 BUILD_ROOT="${BUILD_ROOT:-${SCRIPT_DIR}/build_src}"
 DIST_DIR="${DIST_DIR:-${SCRIPT_DIR}/dist}"
@@ -47,8 +47,13 @@ for path in \
   fi
 done
 
-"${PYTHON_BIN}" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -r "${BUILD_REQ_FILE}"
-"${PYTHON_BIN}" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" -r "${INSTALL_REQ_FILE}"
+pip_args=()
+if compgen -G "${WHEELHOUSE_DIR}/*.whl" >/dev/null; then
+  pip_args=(--no-index --find-links "${WHEELHOUSE_DIR}")
+fi
+
+"${PYTHON_BIN}" -m pip install "${pip_args[@]}" -r "${BUILD_REQ_FILE}"
+"${PYTHON_BIN}" -m pip install "${pip_args[@]}" -r "${INSTALL_REQ_FILE}"
 
 rm -rf "${BUILD_ROOT}" "${DIST_DIR}"
 mkdir -p "${BUILD_ROOT}" "${DIST_DIR}"

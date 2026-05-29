@@ -4,13 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-python3.10}"
-CUDA_VERSION="${CUDA_VERSION:-12.4}"
+CUDA_VERSION="${CUDA_VERSION:-12.2}"
 CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES:-70-real;75-real}"
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/offline_dist}"
 SOURCE_REF="${SOURCE_REF:-HEAD}"
 CLEAN_OUTPUT="${CLEAN_OUTPUT:-1}"
 ONLY_BINARY="${ONLY_BINARY:-1}"
+INCLUDE_WHEELHOUSE="${INCLUDE_WHEELHOUSE:-0}"
 MAKE_TARBALL="${MAKE_TARBALL:-1}"
 
 cd "${REPO_ROOT}"
@@ -22,7 +23,14 @@ exec(Path("lmdeploy/version.py").read_text(), ns)
 print(ns["__version__"])
 PY
 )"
-BUNDLE_NAME="${BUNDLE_NAME:-lmdeploy-${VERSION}-source-build-py310-cu124-sm70-sm75}"
+if [[ "${INCLUDE_WHEELHOUSE}" == "1" ]]; then
+  CUDA_TAG="cu${CUDA_VERSION//./}"
+  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-py310-${CUDA_TAG}-sm70-sm75"
+else
+  CUDA_TAG="cu${CUDA_VERSION//./}"
+  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-lite-py310-${CUDA_TAG}-sm70-sm75"
+fi
+BUNDLE_NAME="${BUNDLE_NAME:-${DEFAULT_BUNDLE_NAME}}"
 BUNDLE_DIR="${OUTPUT_ROOT}/${BUNDLE_NAME}"
 WHEELHOUSE_DIR="${BUNDLE_DIR}/wheelhouse"
 REQ_DIR="${BUNDLE_DIR}/requirements"
@@ -42,15 +50,14 @@ if [[ "${CLEAN_OUTPUT}" == "1" && -d "${BUNDLE_DIR}" ]]; then
   esac
 fi
 
-mkdir -p "${WHEELHOUSE_DIR}" "${REQ_DIR}" "${SOURCE_DIR}" "${THIRD_PARTY_DIR}"
+mkdir -p "${REQ_DIR}" "${SOURCE_DIR}" "${THIRD_PARTY_DIR}"
+if [[ "${INCLUDE_WHEELHOUSE}" == "1" ]]; then
+  mkdir -p "${WHEELHOUSE_DIR}"
+fi
 
 cp requirements/build.txt "${REQ_DIR}/build.txt"
 cp requirements/runtime_cuda.txt "${REQ_DIR}/runtime_cuda.txt"
 cp requirements/serve.txt "${REQ_DIR}/serve.txt"
-cat >"${REQ_DIR}/pytorch_cu124.txt" <<'EOF'
-torch==2.6.0+cu124
-torchvision==0.21.0+cu124
-EOF
 cat >"${REQ_DIR}/offline_build.txt" <<'EOF'
 pip
 setuptools
@@ -62,17 +69,21 @@ cmake_build_extension
 pybind11<=2.13.1
 EOF
 cat >"${REQ_DIR}/offline_install.txt" <<'EOF'
--r pytorch_cu124.txt
 -r runtime_cuda.txt
 -r serve.txt
 EOF
 
-download_args=(download --dest "${WHEELHOUSE_DIR}" --extra-index-url "${TORCH_INDEX_URL}")
-if [[ "${ONLY_BINARY}" == "1" ]]; then
-  download_args+=(--only-binary=:all:)
+if [[ "${INCLUDE_WHEELHOUSE}" == "1" ]]; then
+  download_args=(download --dest "${WHEELHOUSE_DIR}")
+  if [[ -n "${TORCH_INDEX_URL}" ]]; then
+    download_args+=(--extra-index-url "${TORCH_INDEX_URL}")
+  fi
+  if [[ "${ONLY_BINARY}" == "1" ]]; then
+    download_args+=(--only-binary=:all:)
+  fi
+  "${PYTHON_BIN}" -m pip "${download_args[@]}" -r "${REQ_DIR}/offline_build.txt"
+  "${PYTHON_BIN}" -m pip "${download_args[@]}" -r "${REQ_DIR}/offline_install.txt"
 fi
-"${PYTHON_BIN}" -m pip "${download_args[@]}" -r "${REQ_DIR}/offline_build.txt"
-"${PYTHON_BIN}" -m pip "${download_args[@]}" -r "${REQ_DIR}/offline_install.txt"
 
 git archive --format=tar.gz --prefix=lmdeploy-src/ "${SOURCE_REF}" -o "${SOURCE_DIR}/lmdeploy-source.tar.gz"
 git rev-parse "${SOURCE_REF}" >"${SOURCE_DIR}/source_ref.txt"
@@ -121,6 +132,7 @@ chmod +x "${BUNDLE_DIR}/build_lmdeploy_offline.sh" "${BUNDLE_DIR}/install_offlin
   "${PYTHON_BIN}" --version
   echo "cuda_version=${CUDA_VERSION}"
   echo "cmake_cuda_architectures=${CUDA_ARCHITECTURES}"
+  echo "include_wheelhouse=${INCLUDE_WHEELHOUSE}"
   echo "torch_index_url=${TORCH_INDEX_URL}"
   echo "git_status_short_begin"
   git status --short 2>/dev/null || true
@@ -129,8 +141,20 @@ chmod +x "${BUNDLE_DIR}/build_lmdeploy_offline.sh" "${BUNDLE_DIR}/install_offlin
 
 (
   cd "${BUNDLE_DIR}"
-  find build_lmdeploy_offline.sh install_offline.sh verify_install.py build_info.txt third_party_manifest.txt \
-    requirements source third_party wheelhouse -type f -print0 \
+  checksum_paths=(
+    build_lmdeploy_offline.sh
+    install_offline.sh
+    verify_install.py
+    build_info.txt
+    third_party_manifest.txt
+    requirements
+    source
+    third_party
+  )
+  if [[ -d wheelhouse ]]; then
+    checksum_paths+=(wheelhouse)
+  fi
+  find "${checksum_paths[@]}" -type f -print0 \
     | sort -z \
     | xargs -0 sha256sum > SHA256SUMS
 )
