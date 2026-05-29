@@ -44,6 +44,10 @@ bool Registry::Add(std::unique_ptr<Kernel> kernel)
         is_valid = false;
     }
 
+    if (kernel->info().max_active_ctas <= 0) {
+        is_valid = false;
+    }
+
     if (is_valid) {
         ptrs_.push_back(kernels_.emplace_back(std::move(kernel)).get());
     }

@@ -51,15 +51,37 @@ public:
         auto func               = &attention_kernel<K>;
         info_.dynamic_smem_size = sizeof(typename K::SharedStorage);
 
-        cudaFuncGetAttributes(&info_.attr, func);
+        auto status = cudaFuncGetAttributes(&info_.attr, func);
+        if (status != cudaSuccess) {
+            cudaGetLastError();
+            info_.max_active_ctas = 0;
+            info_.num_warps       = K::kWarpCount;
+            info_.name            = to_string(desc_);
+            return;
+        }
 
         if (info_.dynamic_smem_size > (48 << 10)) {
-            cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, info_.dynamic_smem_size);
+            status = cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, info_.dynamic_smem_size);
+            if (status != cudaSuccess) {
+                // Some compiled kernels need more dynamic shared memory than
+                // the active GPU can opt into. They will be filtered out by the
+                // registry, but the failed CUDA call still poisons
+                // cudaGetLastError() unless it is consumed here.
+                cudaGetLastError();
+                info_.max_active_ctas = 0;
+                info_.num_warps       = K::kWarpCount;
+                info_.name            = to_string(desc_);
+                return;
+            }
         }
 
         info_.num_warps = K::kWarpCount;
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        status = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
             &info_.max_active_ctas, func, info_.num_warps * WARP_SIZE, info_.dynamic_smem_size);
+        if (status != cudaSuccess) {
+            cudaGetLastError();
+            info_.max_active_ctas = 0;
+        }
 
         info_.name = to_string(desc_);
     }
