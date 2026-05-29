@@ -208,6 +208,40 @@ class SimpleGenerationConfig:
     include_stop_str_in_output: bool = False
 
 
+GENERATION_CONFIG_INT_FIELDS = {
+    "n",
+    "max_new_tokens",
+    "top_k",
+    "random_seed",
+    "min_new_tokens",
+    "logprobs",
+    "token_decision_infer_type",
+    "token_decision_valid_id",
+    "token_decision_invalid_id",
+    "token_decision_end_id",
+}
+GENERATION_CONFIG_FLOAT_FIELDS = {
+    "top_p",
+    "min_p",
+    "temperature",
+    "repetition_penalty",
+    "token_decision_certainty_threshold",
+    "token_decision_completion_threshold",
+    "token_decision_invalid_bias",
+}
+GENERATION_CONFIG_BOOL_FIELDS = {
+    "do_sample",
+    "ignore_eos",
+    "skip_special_tokens",
+    "spaces_between_special_tokens",
+    "include_stop_str_in_output",
+}
+GENERATION_CONFIG_INT_LIST_FIELDS = {
+    "stop_token_ids",
+    "bad_token_ids",
+}
+
+
 @dataclass
 class GenerationPerf:
     input_tokens: int = 0
@@ -679,6 +713,31 @@ def _new_session_id() -> int:
     return uuid.uuid4().int % (2**31 - 1)
 
 
+def _coerce_int_list(value: Any) -> list[int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return value
+    return [int(item) for item in value]
+
+
+def _normalize_generation_config(payload: dict[str, Any] | None) -> dict[str, Any]:
+    data = dict(payload or {})
+    for key in GENERATION_CONFIG_INT_FIELDS:
+        if data.get(key) is not None:
+            data[key] = int(data[key])
+    for key in GENERATION_CONFIG_FLOAT_FIELDS:
+        if data.get(key) is not None:
+            data[key] = float(data[key])
+    for key in GENERATION_CONFIG_BOOL_FIELDS:
+        if data.get(key) is not None:
+            data[key] = bool(data[key])
+    for key in GENERATION_CONFIG_INT_LIST_FIELDS:
+        if key in data:
+            data[key] = _coerce_int_list(data[key])
+    return data
+
+
 def _build_generation_config(
     payload: dict[str, Any],
     *,
@@ -688,6 +747,7 @@ def _build_generation_config(
     allowed = {field_name for field_name in SimpleGenerationConfig.__dataclass_fields__}
     data = {key: value for key, value in payload.items() if key in allowed}
     data["max_new_tokens"] = int(max_new_tokens or data.get("max_new_tokens") or default_max_new_tokens)
+    data = _normalize_generation_config(data)
     if not bool(data.get("do_sample", False)):
         # TurboMind does not consume do_sample directly. Preserve the user-facing
         # greedy semantics by lowering the sampling knobs before entering C++.

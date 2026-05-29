@@ -23,6 +23,7 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${REPO_ROOT}/lmdeploy/lib:${LD_LIBRARY_PATH:-}"
 export TM_MODEL_PATH="${TM_MODEL_PATH:-${REPO_ROOT}/.cache_models/Qwen/Qwen2.5-0.5B}"
 export TM_GRPC_PORT="${TM_GRPC_PORT:-50051}"
+TARGET="${TARGET:-${TM_GRPC_TARGET:-127.0.0.1:${TM_GRPC_PORT}}}"
 export TM_MAX_NEW_TOKENS="${TM_MAX_NEW_TOKENS:-1}"
 export TM_MAX_INSTANCES="${TM_MAX_INSTANCES:-2}"
 export TM_MAX_BATCH_SIZE="${TM_MAX_BATCH_SIZE:-${TM_MAX_INSTANCES}}"
@@ -57,6 +58,9 @@ RATE_QPS="${RATE_QPS:-0}"
 PHASE_GAP_SEC="${PHASE_GAP_SEC:-0}"
 CHANNEL_READY_TIMEOUT_SEC="${CHANNEL_READY_TIMEOUT_SEC:-10}"
 
+echo "[grpc-pressure] target=${TARGET}"
+echo "[grpc-pressure] server_port=${TM_GRPC_PORT} log=${LOG_FILE}"
+
 rm -f "${LOG_FILE}"
 "${PYTHON_BIN}" grpc_turbomind_server.py >"${LOG_FILE}" 2>&1 &
 server_pid=$!
@@ -67,15 +71,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+server_ready=0
 for _ in $(seq 1 120); do
   if "${PYTHON_BIN}" tests/test_lmdeploy/grpc_client_pressure.py \
-      --target "127.0.0.1:${TM_GRPC_PORT}" \
+      --target "${TARGET}" \
       --requests 1 \
       --concurrency 1 \
       --warmup 0 \
       --infer-type -1 \
       --max-chars 32 \
+      --channel-ready-timeout-sec 0 \
       --health >/tmp/lmdeploy_grpc_pressure_wait.out 2>/tmp/lmdeploy_grpc_pressure_wait.err; then
+    server_ready=1
     break
   fi
   if ! kill -0 "${server_pid}" 2>/dev/null; then
@@ -86,6 +93,13 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 
+if [[ "${server_ready}" != "1" ]]; then
+  echo "[server] did not become healthy"
+  tail -160 "${LOG_FILE}" || true
+  cat /tmp/lmdeploy_grpc_pressure_wait.err || true
+  exit 1
+fi
+
 if ! kill -0 "${server_pid}" 2>/dev/null; then
   echo "[server] exited before pressure"
   tail -160 "${LOG_FILE}" || true
@@ -95,12 +109,12 @@ fi
 cat /tmp/lmdeploy_grpc_pressure_wait.out
 if [[ -n "${EXPECTED_TOKEN_ID}" ]]; then
   "${PYTHON_BIN}" tests/test_lmdeploy/check_grpc_generate_once.py \
-    --target "127.0.0.1:${TM_GRPC_PORT}" \
+    --target "${TARGET}" \
     --infer-type 1 \
     --expected-token-id "${EXPECTED_TOKEN_ID}"
 fi
 "${PYTHON_BIN}" tests/test_lmdeploy/grpc_client_pressure.py \
-  --target "127.0.0.1:${TM_GRPC_PORT}" \
+  --target "${TARGET}" \
   --requests "${REQUESTS}" \
   --concurrency "${CONCURRENCY}" \
   --channels "${CHANNELS}" \

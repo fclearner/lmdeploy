@@ -386,6 +386,44 @@ def test_cpp_logits_processor_accepts_request_token_decision_ids_without_env_ids
     run(scenario())
 
 
+def test_cpp_logits_processor_coerces_struct_float_token_decision_ids():
+    instance = CppProcessorFakeInstance()
+    config = ServerConfig(
+        max_instances=1,
+        enable_cpp_logits_processor=True,
+    )
+    service = TurboMindGenerationService(CppProcessorFakeModel(instance), config)
+
+    async def scenario():
+        await service.start()
+        result = await service.generate(
+            "hello",
+            infer_type=1.0,
+            max_new_tokens=1.0,
+            generation_config={
+                "token_decision_valid_id": 123.0,
+                "token_decision_invalid_id": 456.0,
+                "token_decision_end_id": 789.0,
+                "token_decision_completion_threshold": 0.8,
+            },
+        )
+        assert result.ok
+        gen_config = instance.gen_config
+        assert gen_config.max_new_tokens == 1
+        assert isinstance(gen_config.max_new_tokens, int)
+        assert gen_config.token_decision_infer_type == 1
+        assert isinstance(gen_config.token_decision_infer_type, int)
+        assert gen_config.token_decision_valid_id == 123
+        assert isinstance(gen_config.token_decision_valid_id, int)
+        assert gen_config.token_decision_invalid_id == 456
+        assert isinstance(gen_config.token_decision_invalid_id, int)
+        assert gen_config.token_decision_end_id == 789
+        assert isinstance(gen_config.token_decision_end_id, int)
+        assert gen_config.token_decision_completion_threshold == 0.8
+
+    run(scenario())
+
+
 def test_cpp_logits_processor_infer_type_negative_one_is_noop():
     instance = CppProcessorFakeInstance()
     config = ServerConfig(

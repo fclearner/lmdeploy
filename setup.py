@@ -55,6 +55,13 @@ def get_turbomind_deps():
         ]
 
 
+def get_cmake_cuda_architectures_option():
+    cuda_architectures = os.getenv('CMAKE_CUDA_ARCHITECTURES') or os.getenv('CUDAARCHS')
+    if not cuda_architectures:
+        return []
+    return [f'-DCMAKE_CUDA_ARCHITECTURES={cuda_architectures}']
+
+
 def parse_requirements(fname='requirements.txt', with_version=True):
     """Parse the package dependencies listed in a file but strips specific
     versioning information.
@@ -149,7 +156,7 @@ if get_target_device() == 'cuda' and os.getenv('DISABLE_TURBOMIND', '').lower() 
                 '-DBUILD_PY_FFI=ON',
                 '-DBUILD_MULTI_GPU=' + ('OFF' if os.name == 'nt' else 'ON'),
                 '-DUSE_NVTX=' + ('OFF' if os.name == 'nt' else 'ON'),
-            ],
+            ] + get_cmake_cuda_architectures_option(),
         ),
     ]
     extra_deps = get_turbomind_deps()
@@ -169,6 +176,12 @@ if __name__ == '__main__':
         author='OpenMMLab',
         author_email='openmmlab@gmail.com',
         packages=find_packages(exclude=()),
+        py_modules=[
+            'grpc_turbomind_server',
+            'turbomind_grpc_client',
+            'turbomind_grpc_protocol',
+            'turbomind_service_core',
+        ],
         include_package_data=True,
         setup_requires=parse_requirements('requirements/build.txt'),
         tests_require=parse_requirements('requirements/test.txt'),

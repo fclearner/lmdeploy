@@ -1,4 +1,6 @@
 aiohttp
+grpcio
 prometheus_client
 protobuf
+sanic
 timm!=1.0.23
