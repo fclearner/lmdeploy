@@ -16,6 +16,19 @@ ONLY_BINARY="${ONLY_BINARY:-1}"
 
 cd "${REPO_ROOT}"
 
+PYTHON_VERSION="$("${PYTHON_BIN}" - <<'PY'
+import os
+import sys
+actual = f"{sys.version_info[0]}.{sys.version_info[1]}"
+expected = os.getenv("LMDEPLOY_PYTHON_VERSION")
+if expected and expected != actual:
+    raise SystemExit(f"python {expected} is required, got {sys.version.split()[0]}")
+print(actual)
+PY
+)"
+PYTHON_TAG="py${PYTHON_VERSION//./}"
+CUDA_TAG="cu${CUDA_VERSION//./}"
+
 VERSION="$("${PYTHON_BIN}" - <<'PY'
 from pathlib import Path
 ns = {}
@@ -23,18 +36,12 @@ exec(Path("lmdeploy/version.py").read_text(), ns)
 print(ns["__version__"])
 PY
 )"
-BUNDLE_NAME="${BUNDLE_NAME:-lmdeploy-${VERSION}-py310-cu124-sm70-sm75}"
+BUNDLE_NAME="${BUNDLE_NAME:-lmdeploy-${VERSION}-${PYTHON_TAG}-${CUDA_TAG}-sm70-sm75}"
 BUNDLE_DIR="${OUTPUT_ROOT}/${BUNDLE_NAME}"
 DIST_DIR="${BUNDLE_DIR}/dist"
 WHEELHOUSE_DIR="${BUNDLE_DIR}/wheelhouse"
 REQ_DIR="${BUNDLE_DIR}/requirements"
 TOOLS_DIR="${BUNDLE_DIR}/tools"
-
-"${PYTHON_BIN}" - <<'PY'
-import sys
-if sys.version_info[:2] != (3, 10):
-    raise SystemExit(f"python 3.10 is required, got {sys.version.split()[0]}")
-PY
 
 "${PYTHON_BIN}" - <<PY
 import re
@@ -106,6 +113,7 @@ chmod +x "${BUNDLE_DIR}/install_offline.sh" \
 {
   echo "lmdeploy_version=${VERSION}"
   echo "python_bin=${PYTHON_BIN}"
+  echo "python_version=${PYTHON_VERSION}"
   "${PYTHON_BIN}" --version
   echo "cuda_version=${CUDA_VERSION}"
   nvcc --version

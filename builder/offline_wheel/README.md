@@ -2,7 +2,7 @@
 
 This builder targets the requested production shape:
 
-- Python 3.10
+- Python 3.10 or 3.12
 - CUDA 12.2 for source compilation in the target environment
 - V100 + T4, compiled as `sm_70` and `sm_75`
 - LMDeploy TurboMind enabled
@@ -20,7 +20,7 @@ There are two bundle modes:
 
 ## Build Prebuilt Wheel Bundle On An Online CUDA 12.4 Machine
 
-Use a Linux x86_64 host with Python 3.10, CUDA toolkit 12.4, `nvcc`, CMake,
+Use a Linux x86_64 host with Python 3.10 or 3.12, CUDA toolkit 12.4, `nvcc`, CMake,
 Ninja and a working compiler toolchain. A GPU is not required to compile the
 wheel, but a V100 or T4 is required for final runtime validation.
 
@@ -35,7 +35,7 @@ bash builder/offline_wheel/build_offline_bundle.sh
 The bundle is written to:
 
 ```text
-offline_dist/lmdeploy-<version>-py310-cu124-sm70-sm75/
+offline_dist/lmdeploy-<version>-py<major><minor>-cu124-sm70-sm75/
 ```
 
 The important files are:
@@ -52,7 +52,7 @@ build_info.txt
 SHA256SUMS
 ```
 
-If a dependency has no binary wheel for Python 3.10 on your platform, the build
+If a dependency has no binary wheel for your Python version on your platform, the build
 script fails by default. That is intentional for offline deployment. You can set
 `ONLY_BINARY=0` only if you also plan to support source builds on the offline
 target, which is not recommended for production rollout.
@@ -64,7 +64,8 @@ than install a prebuilt LMDeploy wheel. This is the recommended mode when the
 offline environment already has an internal pip source:
 
 ```bash
-PYTHON_BIN=python3.10 \
+PYTHON_BIN=python3.12 \
+LMDEPLOY_PYTHON_VERSION=3.12 \
 CUDA_VERSION=12.2 \
 LMDEPLOY_CUDA_ARCHITECTURES='70-real;75-real' \
 bash builder/offline_wheel/build_offline_source_bundle.sh
@@ -73,8 +74,8 @@ bash builder/offline_wheel/build_offline_source_bundle.sh
 The bundle is written to:
 
 ```text
-offline_dist/lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75/
-offline_dist/lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75.tar.gz
+offline_dist/lmdeploy-<version>-source-build-lite-py312-cu122-sm70-sm75/
+offline_dist/lmdeploy-<version>-source-build-lite-py312-cu122-sm70-sm75.tar.gz
 ```
 
 The important files are:
@@ -104,15 +105,15 @@ offline compilation does not need GitHub access for `fmt`, `cutlass`,
 On the offline machine, unpack the tarball and compile:
 
 ```bash
-tar -xzf lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75.tar.gz
-cd lmdeploy-<version>-source-build-lite-py310-cu122-sm70-sm75
-PYTHON_BIN=python3.10 bash build_lmdeploy_offline.sh
+tar -xzf lmdeploy-<version>-source-build-lite-py312-cu122-sm70-sm75.tar.gz
+cd lmdeploy-<version>-source-build-lite-py312-cu122-sm70-sm75
+PYTHON_BIN=python3.12 LMDEPLOY_PYTHON_VERSION=3.12 bash build_lmdeploy_offline.sh
 ```
 
 To compile and install into the active environment in one step:
 
 ```bash
-PYTHON_BIN=python3.10 INSTALL_AFTER_BUILD=1 bash build_lmdeploy_offline.sh
+PYTHON_BIN=python3.12 LMDEPLOY_PYTHON_VERSION=3.12 INSTALL_AFTER_BUILD=1 bash build_lmdeploy_offline.sh
 ```
 
 `build_lmdeploy_offline.sh` installs build and runtime Python dependencies
@@ -137,7 +138,7 @@ set `INCLUDE_WHEELHOUSE=1` and, when needed, provide `TORCH_INDEX_URL`.
 Copy the whole bundle directory to the target machine, then run:
 
 ```bash
-PYTHON_BIN=python3.10 bash install_offline.sh
+PYTHON_BIN=python3.12 LMDEPLOY_PYTHON_VERSION=3.12 bash install_offline.sh
 ```
 
 The install script uses `wheelhouse/` with `--no-index --find-links` when local
@@ -151,7 +152,7 @@ local LMDeploy wheel from `dist/`.
 manually:
 
 ```bash
-python3.10 verify_install.py
+LMDEPLOY_PYTHON_VERSION=3.12 python3.12 verify_install.py
 ```
 
 The verifier checks:

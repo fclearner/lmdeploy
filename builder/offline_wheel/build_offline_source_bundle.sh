@@ -17,6 +17,18 @@ MAKE_TARBALL="${MAKE_TARBALL:-1}"
 
 cd "${REPO_ROOT}"
 
+PYTHON_VERSION="$("${PYTHON_BIN}" - <<'PY'
+import os
+import sys
+actual = f"{sys.version_info[0]}.{sys.version_info[1]}"
+expected = os.getenv("LMDEPLOY_PYTHON_VERSION")
+if expected and expected != actual:
+    raise SystemExit(f"python {expected} is required, got {sys.version.split()[0]}")
+print(actual)
+PY
+)"
+PYTHON_TAG="py${PYTHON_VERSION//./}"
+
 VERSION="$("${PYTHON_BIN}" - <<'PY'
 from pathlib import Path
 ns = {}
@@ -26,10 +38,10 @@ PY
 )"
 if [[ "${INCLUDE_WHEELHOUSE}" == "1" ]]; then
   CUDA_TAG="cu${CUDA_VERSION//./}"
-  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-py310-${CUDA_TAG}-sm70-sm75"
+  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-${PYTHON_TAG}-${CUDA_TAG}-sm70-sm75"
 else
   CUDA_TAG="cu${CUDA_VERSION//./}"
-  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-lite-py310-${CUDA_TAG}-sm70-sm75"
+  DEFAULT_BUNDLE_NAME="lmdeploy-${VERSION}-source-build-lite-${PYTHON_TAG}-${CUDA_TAG}-sm70-sm75"
 fi
 BUNDLE_NAME="${BUNDLE_NAME:-${DEFAULT_BUNDLE_NAME}}"
 BUNDLE_DIR="${OUTPUT_ROOT}/${BUNDLE_NAME}"
@@ -37,12 +49,6 @@ WHEELHOUSE_DIR="${BUNDLE_DIR}/wheelhouse"
 REQ_DIR="${BUNDLE_DIR}/requirements"
 SOURCE_DIR="${BUNDLE_DIR}/source"
 THIRD_PARTY_DIR="${BUNDLE_DIR}/third_party"
-
-"${PYTHON_BIN}" - <<'PY'
-import sys
-if sys.version_info[:2] != (3, 10):
-    raise SystemExit(f"python 3.10 is required, got {sys.version.split()[0]}")
-PY
 
 if [[ "${CLEAN_OUTPUT}" == "1" && -d "${BUNDLE_DIR}" ]]; then
   case "${BUNDLE_DIR}" in
@@ -130,6 +136,7 @@ chmod +x "${BUNDLE_DIR}/build_lmdeploy_offline.sh" "${BUNDLE_DIR}/install_offlin
   echo "source_ref=${SOURCE_REF}"
   echo "source_commit=$(git rev-parse "${SOURCE_REF}" 2>/dev/null || true)"
   echo "python_bin=${PYTHON_BIN}"
+  echo "python_version=${PYTHON_VERSION}"
   "${PYTHON_BIN}" --version
   echo "cuda_version=${CUDA_VERSION}"
   echo "cmake_cuda_architectures=${CUDA_ARCHITECTURES}"

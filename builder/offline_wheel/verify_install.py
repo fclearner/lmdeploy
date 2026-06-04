@@ -11,8 +11,11 @@ from pathlib import Path
 
 
 def require_python() -> None:
-    if sys.version_info[:2] != (3, 10):
-        raise SystemExit(f"python 3.10 is required, got {sys.version.split()[0]}")
+    actual = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    expected = os.getenv("LMDEPLOY_PYTHON_VERSION")
+    if expected and expected != actual:
+        raise SystemExit(f"python {expected} is required, got {sys.version.split()[0]}")
+    print(f"ok python: {sys.version.split()[0]}")
 
 
 def import_required(name: str):

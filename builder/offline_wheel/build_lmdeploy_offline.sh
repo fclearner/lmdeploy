@@ -13,11 +13,17 @@ BUILD_REQ_FILE="${BUILD_REQ_FILE:-${SCRIPT_DIR}/requirements/offline_build.txt}"
 INSTALL_REQ_FILE="${INSTALL_REQ_FILE:-${SCRIPT_DIR}/requirements/offline_install.txt}"
 INSTALL_AFTER_BUILD="${INSTALL_AFTER_BUILD:-0}"
 
-"${PYTHON_BIN}" - <<'PY'
+PYTHON_VERSION="$("${PYTHON_BIN}" - <<'PY'
+import os
 import sys
-if sys.version_info[:2] != (3, 10):
-    raise SystemExit(f"python 3.10 is required, got {sys.version.split()[0]}")
+actual = f"{sys.version_info[0]}.{sys.version_info[1]}"
+expected = os.getenv("LMDEPLOY_PYTHON_VERSION")
+if expected and expected != actual:
+    raise SystemExit(f"python {expected} is required, got {sys.version.split()[0]}")
+print(actual)
 PY
+)"
+export LMDEPLOY_PYTHON_VERSION="${PYTHON_VERSION}"
 
 "${PYTHON_BIN}" - <<PY
 import re
@@ -87,7 +93,7 @@ done
 "${PYTHON_BIN}" -m build --wheel --no-isolation -o "${DIST_DIR}"
 
 if [[ "${INSTALL_AFTER_BUILD}" == "1" ]]; then
-  PYTHON_BIN="${PYTHON_BIN}" "${SCRIPT_DIR}/install_offline.sh"
+  PYTHON_BIN="${PYTHON_BIN}" LMDEPLOY_PYTHON_VERSION="${PYTHON_VERSION}" "${SCRIPT_DIR}/install_offline.sh"
 fi
 
 echo "Offline LMDeploy wheel is ready under: ${DIST_DIR}"

@@ -6,11 +6,17 @@ PYTHON_BIN="${PYTHON_BIN:-python3.10}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-${SCRIPT_DIR}/wheelhouse}"
 REQ_FILE="${REQ_FILE:-${SCRIPT_DIR}/requirements/offline_install.txt}"
 
-"${PYTHON_BIN}" - <<'PY'
+PYTHON_VERSION="$("${PYTHON_BIN}" - <<'PY'
+import os
 import sys
-if sys.version_info[:2] != (3, 10):
-    raise SystemExit(f"python 3.10 is required, got {sys.version.split()[0]}")
+actual = f"{sys.version_info[0]}.{sys.version_info[1]}"
+expected = os.getenv("LMDEPLOY_PYTHON_VERSION")
+if expected and expected != actual:
+    raise SystemExit(f"python {expected} is required, got {sys.version.split()[0]}")
+print(actual)
 PY
+)"
+export LMDEPLOY_PYTHON_VERSION="${PYTHON_VERSION}"
 
 mapfile -t wheels < <(find "${SCRIPT_DIR}/dist" -maxdepth 1 -name 'lmdeploy-*.whl' | sort)
 if [[ "${#wheels[@]}" -ne 1 ]]; then
