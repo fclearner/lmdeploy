@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "src/turbomind/kernels/core/common.h"
 #include "src/turbomind/kernels/core/data_type.h"
 
 namespace turbomind {
@@ -11,31 +12,31 @@ struct SubBytePtr {
 
     constexpr SubBytePtr() = default;
 
-    constexpr __host__ __device__ explicit SubBytePtr(T* ptr): ptr_((char*)ptr) {}
+    TM_HOST_DEVICE constexpr explicit SubBytePtr(T* ptr): ptr_((char*)ptr) {}
 
-    constexpr __host__ __device__ SubBytePtr(char* ptr): ptr_(ptr) {}
+    TM_HOST_DEVICE constexpr SubBytePtr(char* ptr): ptr_(ptr) {}
 
-    __host__ __device__ T& operator[](int i)
+    TM_HOST_DEVICE T& operator[](int i)
     {
         return *reinterpret_cast<T*>(ptr_ + i * bitsof<T> / bitsof<char>);
     }
 
-    friend __host__ __device__ SubBytePtr operator+(const SubBytePtr a, int n)
+    TM_HOST_DEVICE friend SubBytePtr operator+(const SubBytePtr a, int n)
     {
         return SubBytePtr{a.ptr_ + n * bitsof<T> / bitsof<char>};
     }
 
-    friend __host__ __device__ SubBytePtr operator+(int n, const SubBytePtr a)
+    TM_HOST_DEVICE friend SubBytePtr operator+(int n, const SubBytePtr a)
     {
         return a + n;
     }
 
-    friend __host__ __device__ bool operator==(const SubBytePtr& a, const SubBytePtr& b)
+    TM_HOST_DEVICE friend bool operator==(const SubBytePtr& a, const SubBytePtr& b)
     {
         return a.ptr_ == b.ptr_;
     }
 
-    __host__ __device__ explicit operator T*() const
+    TM_HOST_DEVICE explicit operator T*() const
     {
         return (T*)ptr_;
     }
