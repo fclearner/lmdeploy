@@ -55,7 +55,9 @@ const auto& GetCopyAPI()
         const auto                      symbol = "cuMemcpyBatchAsync";
         cudaDriverEntryPointQueryResult status{};
         void*                           fpn{};
-        TM_CHECK_EQ(cudaGetDriverEntryPoint(symbol, &fpn, cudaEnableDefault, &status), 0);
+        if (cudaGetDriverEntryPoint(symbol, &fpn, cudaEnableDefault, &status) != cudaSuccess) {
+            return {};
+        }
         if (fpn && status == cudaDriverEntryPointSuccess) {
             return (PFN_cuMemcpyBatchAsync_v12080)fpn;
         }
