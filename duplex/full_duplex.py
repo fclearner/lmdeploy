@@ -165,11 +165,11 @@ async def turn_end_logging(data):
 
     return ret
 
-async def get_duplex_response(triton_client, data, max_context_len, timeout):
+async def get_duplex_response(lmdeploy_client, data, max_context_len, timeout):
     fallback = False
     fallback_msg = ""
 
-    if not await triton_client.health_check(): # triton服务不健康，回退兜底
+    if not await lmdeploy_client.health_check(): # LMDeploy gRPC backend is unhealthy; use fallback.
         fallback = True
         fallback_msg = "LMDeploy gRPC server is not healthy"
 
@@ -424,7 +424,7 @@ async def get_duplex_response(triton_client, data, max_context_len, timeout):
                 else:
                     try:
                         output_text = ""
-                        validity_output = await triton_client.infer(
+                        validity_output = await lmdeploy_client.infer(
                             data.requestId,
                             prompt,
                             decoding_type=0,
@@ -438,7 +438,7 @@ async def get_duplex_response(triton_client, data, max_context_len, timeout):
 
                         # 确认有效后判断语义完整性
                         if validity_output == "<valid>":
-                            completion_output = await triton_client.infer(
+                            completion_output = await lmdeploy_client.infer(
                                 data.requestId,
                                 prompt_t,
                                 decoding_type=1,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import asyncio
 import itertools
 import inspect
@@ -8,9 +9,11 @@ import json
 import logging
 import os
 import queue
+import re
+from contextlib import suppress
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Iterable
 
 from pydantic import ValidationError
 
@@ -21,18 +24,20 @@ from .service_config import warmup_prompt
 
 
 LOGGER = logging.getLogger("duplex.server")
-SENSITIVE_KEYS = {
-    "asrText",
-    "ttsText",
-    "context",
-    "user",
-    "finalText",
-    "textToConcat",
-    "textToTrim",
-    "lastReply",
-    "labelText",
-    "bufferText",
-}
+LEGACY_REQUEST_TIMEOUT_ENV = "TRITON_REQUEST_TIMEOUT"
+DESENSITIZE_WHITELIST = (
+    "callId",
+    "sessionId",
+    "requestId",
+    "startTime",
+    "endTime",
+    "roundId",
+    "lastRoundId",
+    "prevRoundId",
+    "timeBatch",
+    "countBatch",
+)
+_MASK_RE = re.compile(r"\d{3,}")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -53,6 +58,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def setup_logging(logfile: str | None = None, max_bytes: int = 100 * 1024 * 1024, backup_count: int = 5) -> None:
+    stop_logging()
     log_queue: queue.Queue = queue.Queue(-1)
     queue_handler = QueueHandler(log_queue)
     root = logging.getLogger()
@@ -67,9 +73,41 @@ def setup_logging(logfile: str | None = None, max_bytes: int = 100 * 1024 * 1024
     for handler in handlers:
         handler.setFormatter(formatter)
 
-    listener = QueueListener(log_queue, *handlers)
+    listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
     listener.start()
+    root._duplex_queue_handler = queue_handler  # keep references for graceful shutdown
     root._duplex_queue_listener = listener  # keep listener alive for the process lifetime
+    root._duplex_log_handlers = handlers
+
+
+def stop_logging() -> None:
+    root = logging.getLogger()
+    listener = getattr(root, "_duplex_queue_listener", None)
+    if listener is not None:
+        try:
+            listener.stop()
+        except Exception:
+            pass
+        finally:
+            if hasattr(root, "_duplex_queue_listener"):
+                delattr(root, "_duplex_queue_listener")
+
+    queue_handler = getattr(root, "_duplex_queue_handler", None)
+    if queue_handler is not None:
+        with suppress(ValueError):
+            root.removeHandler(queue_handler)
+        if hasattr(root, "_duplex_queue_handler"):
+            delattr(root, "_duplex_queue_handler")
+
+    handlers = getattr(root, "_duplex_log_handlers", [])
+    for handler in handlers:
+        with suppress(Exception):
+            handler.flush()
+        if isinstance(handler, RotatingFileHandler):
+            with suppress(Exception):
+                handler.close()
+    if hasattr(root, "_duplex_log_handlers"):
+        delattr(root, "_duplex_log_handlers")
 
 
 def create_app(
@@ -77,7 +115,8 @@ def create_app(
     max_concurrency: int | None = None,
     max_context_len: int | None = None,
     request_timeout: float | None = None,
-    client_pool_size: int | None = None,
+    grpc_client_pool_size: int | None = None,
+    grpc_client_channels: int | None = None,
     warmup_enabled: bool | None = None,
 ):
     try:
@@ -97,45 +136,60 @@ def create_app(
     max_context_len = max_context_len or _env_int("DUPLEX_MAX_CONTEXT_LEN", _env_int("MAX_CONTEXT_LEN", 6000))
     request_timeout = request_timeout or _env_float(
         "DUPLEX_REQUEST_TIMEOUT",
-        _env_float("TRITON_REQUEST_TIMEOUT", 0.25),
+        _env_float(LEGACY_REQUEST_TIMEOUT_ENV, 0.25),
     )
-    client_pool_size = client_pool_size or _env_int("DUPLEX_CLIENT_POOL_SIZE", 1)
+    grpc_client_pool_size = grpc_client_pool_size or _env_int(
+        "DUPLEX_GRPC_CLIENT_POOL_SIZE",
+        _env_int("DUPLEX_CLIENT_POOL_SIZE", 1),
+    )
     warmup_enabled = _env_bool("DUPLEX_WARMUP_ENABLED", True) if warmup_enabled is None else warmup_enabled
-    default_channels = _env_int("DUPLEX_DEFAULT_GRPC_CHANNELS", max(1, min(64, max_concurrency)))
+    grpc_client_channels = grpc_client_channels or _env_int(
+        "DUPLEX_GRPC_CLIENT_CHANNELS",
+        _env_int("DUPLEX_DEFAULT_GRPC_CHANNELS", max(1, min(64, max_concurrency))),
+    )
 
     app = Sanic("duplex-lmdeploy-gateway")
     app.ctx.config = SimpleNamespace(
         max_concurrency=max_concurrency,
         max_context_len=max_context_len,
         request_timeout=request_timeout,
-        client_pool_size=client_pool_size,
+        grpc_client_pool_size=grpc_client_pool_size,
+        grpc_client_channels=grpc_client_channels,
         warmup_enabled=warmup_enabled,
-        default_channels=default_channels,
     )
 
     @app.before_server_start
     async def _startup(app, _loop) -> None:
-        clients = [
-            DuplexLmdeployClient.from_env(default_channels=default_channels)
-            for _ in range(client_pool_size)
-        ]
-        await asyncio.gather(*(client.start() for client in clients))
+        app.ctx.lmdeploy_clients = []
+        lmdeploy_clients = []
+        for _ in range(grpc_client_pool_size):
+            client = DuplexLmdeployClient.from_env(default_grpc_client_channels=grpc_client_channels)
+            app.ctx.lmdeploy_clients.append(client)
+            lmdeploy_clients.append(client)
+        await asyncio.gather(*(client.start() for client in lmdeploy_clients))
         if warmup_enabled:
-            await asyncio.gather(*(model_warmup(client) for client in clients))
-        app.ctx.clients = clients
-        app.ctx.client_cycle = itertools.cycle(clients)
+            await asyncio.gather(*(model_warmup(client) for client in lmdeploy_clients))
+        app.ctx.lmdeploy_client_cycle = itertools.cycle(lmdeploy_clients)
         LOGGER.info(
-            "duplex gateway started target=%s clients=%s default_channels=%s timeout=%.3f",
-            clients[0].config.target if clients else "n/a",
-            client_pool_size,
-            default_channels,
+            "duplex gateway started target=%s grpc_client_pool_size=%s grpc_client_channels=%s timeout=%.3f",
+            lmdeploy_clients[0].config.target if lmdeploy_clients else "n/a",
+            grpc_client_pool_size,
+            grpc_client_channels,
             request_timeout,
         )
 
+    @app.before_server_stop
+    async def _shutdown_clients(app, _loop) -> None:
+        lmdeploy_clients = getattr(app.ctx, "lmdeploy_clients", [])
+        results = await asyncio.gather(*(client.close() for client in lmdeploy_clients), return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                LOGGER.warning("error while closing duplex gRPC client: %s", result)
+        app.ctx.lmdeploy_clients = []
+
     @app.after_server_stop
-    async def _shutdown(app, _loop) -> None:
-        clients = getattr(app.ctx, "clients", [])
-        await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+    async def _shutdown_logging(_app, _loop) -> None:
+        stop_logging()
 
     @app.get("/health/check")
     async def _health_check(_request):
@@ -143,8 +197,11 @@ def create_app(
 
     @app.get("/health/ready")
     async def _health_ready(request):
-        clients = getattr(request.app.ctx, "clients", [])
-        raw_statuses = await asyncio.gather(*(client.health() for client in clients), return_exceptions=True)
+        lmdeploy_clients = getattr(request.app.ctx, "lmdeploy_clients", [])
+        raw_statuses = await asyncio.gather(
+            *(client.health() for client in lmdeploy_clients),
+            return_exceptions=True,
+        )
         statuses = [
             {"status": "unhealthy", "error": str(item)}
             if isinstance(item, Exception)
@@ -177,10 +234,10 @@ def create_app(
         except ValidationError as exc:
             return _json_response(raw, {"error": exc.errors()}, status=400)
 
-        client = next(request.app.ctx.client_cycle)
+        lmdeploy_client = next(request.app.ctx.lmdeploy_client_cycle)
         LOGGER.info("infer request=%s", desensitize(model_to_dict(data)))
         ret = await get_duplex_response(
-            client,
+            lmdeploy_client,
             data,
             request.app.ctx.config.max_context_len,
             request.app.ctx.config.request_timeout,
@@ -191,26 +248,29 @@ def create_app(
     return app
 
 
-async def model_warmup(client: DuplexLmdeployClient) -> None:
+async def model_warmup(lmdeploy_client: DuplexLmdeployClient) -> None:
     for index, prompt in enumerate(warmup_prompt):
-        await client.infer(f"duplex-warmup-{index}", prompt, decoding_type=1)
+        await lmdeploy_client.infer(f"duplex-warmup-{index}", prompt, decoding_type=1)
 
 
-def desensitize(value: Any) -> Any:
+def _mask(text: str) -> str:
+    return _MASK_RE.sub(lambda match: "*" * len(match.group(0)), text)
+
+
+def desensitize(value: Any, whitelist: Iterable[str] = DESENSITIZE_WHITELIST) -> Any:
+    whitelist_set = set(whitelist or ())
     if isinstance(value, dict):
-        return {key: _mask_value(key, item) for key, item in value.items()}
+        return {
+            key: item if key in whitelist_set else desensitize(item, whitelist_set)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [desensitize(item) for item in value]
+        return [desensitize(item, whitelist_set) for item in value]
+    if isinstance(value, (int, float)):
+        return _mask(str(value))
+    if isinstance(value, str):
+        return _mask(value)
     return value
-
-
-def _mask_value(key: str, value: Any) -> Any:
-    if key in SENSITIVE_KEYS:
-        if isinstance(value, str):
-            return f"<len:{len(value)}>"
-        if isinstance(value, list):
-            return f"<list:{len(value)}>"
-    return desensitize(value)
 
 
 def _json_response(raw, payload: dict[str, Any], *, status: int = 200):
@@ -251,8 +311,12 @@ def main() -> None:
     }
     if "single_process" in inspect.signature(app.run).parameters:
         run_kwargs["single_process"] = args.single_process
-    app.run(**run_kwargs)
+    try:
+        app.run(**run_kwargs)
+    finally:
+        stop_logging()
 
 
 if __name__ == "__main__":
+    atexit.register(stop_logging)
     main()

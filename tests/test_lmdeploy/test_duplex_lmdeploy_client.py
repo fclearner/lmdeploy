@@ -124,3 +124,15 @@ def test_failed_grpc_result_raises_runtime_error():
         await client.close()
 
     run(scenario())
+
+
+def test_config_uses_normalized_grpc_client_channels(monkeypatch):
+    monkeypatch.delenv("DUPLEX_GRPC_CLIENT_CHANNELS", raising=False)
+    monkeypatch.delenv("TM_GRPC_CLIENT_CHANNELS", raising=False)
+
+    config = DuplexLmdeployClientConfig.from_env(default_grpc_client_channels=7)
+    assert config.channels == 7
+
+    monkeypatch.setenv("DUPLEX_GRPC_CLIENT_CHANNELS", "13")
+    config = DuplexLmdeployClientConfig.from_env(default_grpc_client_channels=7)
+    assert config.channels == 13

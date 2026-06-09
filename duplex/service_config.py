@@ -1,8 +1,14 @@
 
-# ============== Tritonserver ================
-IP = "localhost"
-URL = f"{IP}:8001"
-MODEL_NAME = "tensorrt_llm_bls"
+# ============== Deprecated backend aliases ================
+# The Sanic gateway now talks to LMDeploy through DUPLEX_GRPC_TARGET. These
+# aliases are retained for older imports and should not be used by new code.
+BACKEND_HOST = "localhost"
+BACKEND_URL = f"{BACKEND_HOST}:8001"
+BACKEND_MODEL_NAME = "tensorrt_llm_bls"
+
+IP = BACKEND_HOST
+URL = BACKEND_URL
+MODEL_NAME = BACKEND_MODEL_NAME
 
 # ============== LLM ================
 system_prompt = "<|im_start|>system\nYou are a helpful assistant."

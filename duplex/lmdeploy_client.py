@@ -71,7 +71,7 @@ class DuplexLmdeployClientConfig:
     invalid_bias: float = INVALID_BIAS
 
     @classmethod
-    def from_env(cls, *, default_channels: int = 4) -> "DuplexLmdeployClientConfig":
+    def from_env(cls, *, default_grpc_client_channels: int = 4) -> "DuplexLmdeployClientConfig":
         target = os.getenv("DUPLEX_GRPC_TARGET") or os.getenv("TM_GRPC_TARGET") or "127.0.0.1:50051"
         return cls(
             target=target,
@@ -79,7 +79,7 @@ class DuplexLmdeployClientConfig:
             channels=int(
                 os.getenv(
                     "DUPLEX_GRPC_CLIENT_CHANNELS",
-                    os.getenv("TM_GRPC_CLIENT_CHANNELS", default_channels),
+                    os.getenv("TM_GRPC_CLIENT_CHANNELS", default_grpc_client_channels),
                 )
             ),
             max_inflight=_env_optional_int("DUPLEX_GRPC_CLIENT_MAX_INFLIGHT", "TM_GRPC_CLIENT_MAX_INFLIGHT"),
@@ -133,8 +133,8 @@ class DuplexLmdeployClient:
         self._started = False
 
     @classmethod
-    def from_env(cls, *, default_channels: int = 4) -> "DuplexLmdeployClient":
-        return cls(DuplexLmdeployClientConfig.from_env(default_channels=default_channels))
+    def from_env(cls, *, default_grpc_client_channels: int = 4) -> "DuplexLmdeployClient":
+        return cls(DuplexLmdeployClientConfig.from_env(default_grpc_client_channels=default_grpc_client_channels))
 
     async def start(self) -> None:
         async with self._start_lock:

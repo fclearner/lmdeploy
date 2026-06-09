@@ -1,6 +1,7 @@
 import asyncio
 
 from duplex.full_duplex import get_duplex_response, turn_end_logging
+from duplex.server import desensitize
 from duplex.schemas import EndData, InferData, InputData
 
 
@@ -98,3 +99,29 @@ def test_turn_end_logging_flushes_buffer_to_final_text():
     assert ret["state"] == 2
     assert ret["finalText"] == ["hello"]
     assert ret["history"]["buffer"] == []
+
+
+def test_desensitize_masks_digit_runs_and_honors_business_whitelist():
+    payload = {
+        "callId": "call-123456",
+        "requestId": "req-123456",
+        "input": {
+            "asrText": "phone 13800138000 id 42",
+            "startTime": 123.45,
+            "score": 12345,
+        },
+        "history": {
+            "context": "acct 6222020202020202",
+            "countBatch": [123456],
+        },
+    }
+
+    masked = desensitize(payload)
+
+    assert masked["callId"] == "call-123456"
+    assert masked["requestId"] == "req-123456"
+    assert masked["input"]["asrText"] == "phone *********** id 42"
+    assert masked["input"]["startTime"] == 123.45
+    assert masked["input"]["score"] == "*****"
+    assert masked["history"]["context"] == "acct ****************"
+    assert masked["history"]["countBatch"] == [123456]
