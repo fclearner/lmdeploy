@@ -12,6 +12,37 @@ WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-${SCRIPT_DIR}/wheelhouse}"
 BUILD_REQ_FILE="${BUILD_REQ_FILE:-${SCRIPT_DIR}/requirements/offline_build.txt}"
 INSTALL_REQ_FILE="${INSTALL_REQ_FILE:-${SCRIPT_DIR}/requirements/offline_install.txt}"
 INSTALL_AFTER_BUILD="${INSTALL_AFTER_BUILD:-0}"
+TMPDIR="${TMPDIR:-${SCRIPT_DIR}/.tmp}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SCRIPT_DIR}/.cache}"
+PIP_CACHE_DIR="${PIP_CACHE_DIR:-${XDG_CACHE_HOME}/pip}"
+MIN_BUILD_FREE_GB="${LMDEPLOY_MIN_BUILD_FREE_GB:-10}"
+MIN_DIST_FREE_GB="${LMDEPLOY_MIN_DIST_FREE_GB:-1}"
+MIN_TMP_FREE_GB="${LMDEPLOY_MIN_TMP_FREE_GB:-2}"
+MIN_CACHE_FREE_GB="${LMDEPLOY_MIN_CACHE_FREE_GB:-1}"
+
+mkdir -p "${TMPDIR}" "${BUILD_ROOT}" "${DIST_DIR}" "${PIP_CACHE_DIR}"
+export TMPDIR XDG_CACHE_HOME PIP_CACHE_DIR
+
+check_free_space() {
+  local path="$1"
+  local label="$2"
+  local min_gb="$3"
+  local available_kb
+  available_kb="$(df -Pk "${path}" | awk 'NR == 2 {print $4}')"
+  local min_kb=$((min_gb * 1024 * 1024))
+  if [[ -z "${available_kb}" || "${available_kb}" -lt "${min_kb}" ]]; then
+    echo "Insufficient free space for ${label}: need >= ${min_gb} GiB, current df output:" >&2
+    df -h "${path}" >&2 || true
+    echo "Set BUILD_ROOT and TMPDIR to a larger filesystem, for example:" >&2
+    echo "  BUILD_ROOT=/data/lmdeploy_build TMPDIR=/data/tmp PYTHON_BIN=${PYTHON_BIN} bash build_lmdeploy_offline.sh" >&2
+    exit 1
+  fi
+}
+
+check_free_space "${BUILD_ROOT}" "BUILD_ROOT" "${MIN_BUILD_FREE_GB}"
+check_free_space "${DIST_DIR}" "DIST_DIR" "${MIN_DIST_FREE_GB}"
+check_free_space "${TMPDIR}" "TMPDIR" "${MIN_TMP_FREE_GB}"
+check_free_space "${PIP_CACHE_DIR}" "PIP_CACHE_DIR" "${MIN_CACHE_FREE_GB}"
 
 PYTHON_VERSION="$("${PYTHON_BIN}" - <<'PY'
 import os
@@ -29,7 +60,7 @@ export LMDEPLOY_PYTHON_VERSION="${PYTHON_VERSION}"
 import re
 import subprocess
 required = "${CUDA_VERSION}"
-out = subprocess.check_output(["nvcc", "--version"], text=True)
+out = subprocess.check_output(["${CUDACXX:-nvcc}", "--version"], text=True)
 match = re.search(r"release\\s+(\\d+\\.\\d+)", out)
 if not match:
     raise SystemExit("failed to parse nvcc version")
@@ -38,6 +69,19 @@ if actual != required:
     raise SystemExit(f"CUDA {required} is required, got {actual}")
 print(out.strip())
 PY
+
+cuda_smoke_dir="$(mktemp -d "${TMPDIR}/lmdeploy_cuda_smoke.XXXXXX")"
+trap 'rm -rf "${cuda_smoke_dir}"' EXIT
+cat >"${cuda_smoke_dir}/nvcc_check.cu" <<'EOF'
+int main() { return 0; }
+EOF
+nvcc_smoke_args=(-c "${cuda_smoke_dir}/nvcc_check.cu" -o "${cuda_smoke_dir}/nvcc_check.o")
+if [[ -n "${CUDAHOSTCXX:-}" ]]; then
+  nvcc_smoke_args=(-ccbin "${CUDAHOSTCXX}" "${nvcc_smoke_args[@]}")
+elif [[ -n "${CXX:-}" ]]; then
+  nvcc_smoke_args=(-ccbin "${CXX}" "${nvcc_smoke_args[@]}")
+fi
+"${CUDACXX:-nvcc}" "${nvcc_smoke_args[@]}"
 
 for path in \
   "${SCRIPT_DIR}/source/lmdeploy-source.tar.gz" \

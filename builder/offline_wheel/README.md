@@ -133,6 +133,50 @@ V100-only environment from accidentally producing a wheel without `sm_75`.
 If you still need a fully self-contained source-build bundle with pip wheels,
 set `INCLUDE_WHEELHOUSE=1` and, when needed, provide `TORCH_INDEX_URL`.
 
+### CUDA Host Compiler And Disk Space Checks
+
+`build_lmdeploy_offline.sh` runs an early `nvcc` smoke test before the full
+build. If it fails with:
+
+```text
+nvcc fatal: Failed to preprocess host compiler properties.
+```
+
+first check for disk pressure. A preceding error such as:
+
+```text
+No space left on device
+```
+
+means the failure is from the filesystem used by `TMPDIR` or the build
+directory, not from LMDeploy C++ headers.
+
+Use a larger filesystem for both temporary files and build output:
+
+```bash
+mkdir -p /data/lmdeploy_build /data/lmdeploy_dist /data/tmp /data/cache/pip
+CC=/usr/bin/gcc-11 \
+CXX=/usr/bin/g++-11 \
+CUDAHOSTCXX=/usr/bin/g++-11 \
+CUDACXX=/usr/local/cuda/bin/nvcc \
+BUILD_ROOT=/data/lmdeploy_build \
+DIST_DIR=/data/lmdeploy_dist \
+TMPDIR=/data/tmp \
+PIP_CACHE_DIR=/data/cache/pip \
+PYTHON_BIN=python3.12 \
+LMDEPLOY_PYTHON_VERSION=3.12 \
+INSTALL_AFTER_BUILD=1 \
+bash build_lmdeploy_offline.sh
+```
+
+The script requires at least 10 GiB free for `BUILD_ROOT`, 1 GiB free for
+`DIST_DIR`, 2 GiB free for `TMPDIR`, and 1 GiB free for `PIP_CACHE_DIR` by
+default. Override these checks only if you have measured the target environment:
+
+```bash
+LMDEPLOY_MIN_BUILD_FREE_GB=6 LMDEPLOY_MIN_TMP_FREE_GB=1 bash build_lmdeploy_offline.sh
+```
+
 ## Install Offline
 
 Copy the whole bundle directory to the target machine, then run:

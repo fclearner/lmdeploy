@@ -169,6 +169,7 @@ class TurboMindGrpcClient:
         logits_top_k: int = 20,
         logits_token_ids: list[int] | None = None,
         infer_type: int = -1,
+        timeout_s: float | None = None,
         should_abort: Callable[[], bool] | None = None,
     ) -> GenerateResult:
         await self.start()
@@ -203,7 +204,7 @@ class TurboMindGrpcClient:
         call_started = asyncio.get_running_loop().time()
         payload_start_wall_time_s = time.time()
         request_msg.fields["_grpc_client_call_started_wall_time_s"].number_value = payload_start_wall_time_s
-        call = generate(request_msg, timeout=self.timeout_s)
+        call = generate(request_msg, timeout=self.timeout_s if timeout_s is None else timeout_s)
         call_task = None
         abort_watch_task = None
         try:

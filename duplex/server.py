@@ -118,6 +118,8 @@ def create_app(
     grpc_client_pool_size: int | None = None,
     grpc_client_channels: int | None = None,
     warmup_enabled: bool | None = None,
+    warmup_timeout: float | None = None,
+    warmup_required: bool | None = None,
 ):
     try:
         from sanic import Sanic, text
@@ -143,6 +145,8 @@ def create_app(
         _env_int("DUPLEX_CLIENT_POOL_SIZE", 1),
     )
     warmup_enabled = _env_bool("DUPLEX_WARMUP_ENABLED", True) if warmup_enabled is None else warmup_enabled
+    warmup_timeout = warmup_timeout or _env_float("DUPLEX_WARMUP_TIMEOUT", max(10.0, request_timeout))
+    warmup_required = _env_bool("DUPLEX_WARMUP_REQUIRED", False) if warmup_required is None else warmup_required
     grpc_client_channels = grpc_client_channels or _env_int(
         "DUPLEX_GRPC_CLIENT_CHANNELS",
         _env_int("DUPLEX_DEFAULT_GRPC_CHANNELS", max(1, min(64, max_concurrency))),
@@ -156,6 +160,8 @@ def create_app(
         grpc_client_pool_size=grpc_client_pool_size,
         grpc_client_channels=grpc_client_channels,
         warmup_enabled=warmup_enabled,
+        warmup_timeout=warmup_timeout,
+        warmup_required=warmup_required,
     )
 
     @app.before_server_start
@@ -168,14 +174,26 @@ def create_app(
             lmdeploy_clients.append(client)
         await asyncio.gather(*(client.start() for client in lmdeploy_clients))
         if warmup_enabled:
-            await asyncio.gather(*(model_warmup(client) for client in lmdeploy_clients))
+            await asyncio.gather(
+                *(
+                    model_warmup(client, timeout=warmup_timeout, required=warmup_required)
+                    for client in lmdeploy_clients
+                )
+            )
         app.ctx.lmdeploy_client_cycle = itertools.cycle(lmdeploy_clients)
         LOGGER.info(
-            "duplex gateway started target=%s grpc_client_pool_size=%s grpc_client_channels=%s timeout=%.3f",
+            (
+                "duplex gateway started target=%s grpc_client_pool_size=%s "
+                "grpc_client_channels=%s timeout=%.3f warmup_enabled=%s "
+                "warmup_timeout=%.3f warmup_required=%s"
+            ),
             lmdeploy_clients[0].config.target if lmdeploy_clients else "n/a",
             grpc_client_pool_size,
             grpc_client_channels,
             request_timeout,
+            warmup_enabled,
+            warmup_timeout,
+            warmup_required,
         )
 
     @app.before_server_stop
@@ -248,9 +266,19 @@ def create_app(
     return app
 
 
-async def model_warmup(lmdeploy_client: DuplexLmdeployClient) -> None:
+async def model_warmup(
+    lmdeploy_client: DuplexLmdeployClient,
+    *,
+    timeout: float | None = None,
+    required: bool = False,
+) -> None:
     for index, prompt in enumerate(warmup_prompt):
-        await lmdeploy_client.infer(f"duplex-warmup-{index}", prompt, decoding_type=1)
+        try:
+            await lmdeploy_client.infer(f"duplex-warmup-{index}", prompt, decoding_type=1, timeout=timeout)
+        except Exception as exc:
+            LOGGER.warning("duplex warmup failed index=%s required=%s error=%s", index, required, exc)
+            if required:
+                raise
 
 
 def _mask(text: str) -> str:

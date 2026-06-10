@@ -183,14 +183,21 @@ class DuplexLmdeployClient:
         if not await self.health_check():
             raise RuntimeError(f"LMDeploy gRPC target is not healthy: {self._last_health}")
 
-        coro = self._generate_once(request_id, text_input, decoding_type)
+        coro = self._generate_once(request_id, text_input, decoding_type, timeout_s=timeout)
         if timeout is not None and timeout > 0:
             result = await asyncio.wait_for(coro, timeout=timeout)
         else:
             result = await coro
         return self._normalize_output(result, decoding_type)
 
-    async def _generate_once(self, request_id: str, text_input: str, decoding_type: int) -> GenerateResult:
+    async def _generate_once(
+        self,
+        request_id: str,
+        text_input: str,
+        decoding_type: int,
+        *,
+        timeout_s: float | None = None,
+    ) -> GenerateResult:
         generation_config = self._generation_config(decoding_type)
         max_new_tokens = self.config.raw_max_new_tokens if decoding_type < 0 else self.config.max_new_tokens
         return await self.grpc_client.generate(
@@ -201,6 +208,7 @@ class DuplexLmdeployClient:
             include_text=True,
             include_token_ids=True,
             infer_type=decoding_type,
+            timeout_s=timeout_s,
         )
 
     def _generation_config(self, decoding_type: int) -> dict[str, Any]:

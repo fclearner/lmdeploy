@@ -1,5 +1,6 @@
 import asyncio
 
+import duplex.server as duplex_server
 from duplex.full_duplex import get_duplex_response, turn_end_logging
 from duplex.server import desensitize
 from duplex.schemas import EndData, InferData, InputData
@@ -32,6 +33,23 @@ class FakeDuplexClient:
         if decoding_type == 1:
             return "<|im_end|>"
         return ""
+
+
+class FailingWarmupClient:
+
+    def __init__(self):
+        self.calls = []
+
+    async def infer(self, request_id, text_input, decoding_type=0, timeout=None):
+        self.calls.append(
+            {
+                "request_id": request_id,
+                "text_input": text_input,
+                "decoding_type": decoding_type,
+                "timeout": timeout,
+            }
+        )
+        raise RuntimeError("warmup timeout")
 
 
 def make_data(asr_text="hello", vad_final=True):
@@ -125,3 +143,29 @@ def test_desensitize_masks_digit_runs_and_honors_business_whitelist():
     assert masked["input"]["score"] == "*****"
     assert masked["history"]["context"] == "acct ****************"
     assert masked["history"]["countBatch"] == [123456]
+
+
+def test_model_warmup_is_best_effort_by_default(monkeypatch):
+    client = FailingWarmupClient()
+    monkeypatch.setattr(duplex_server, "warmup_prompt", ["a", "b"])
+
+    run(duplex_server.model_warmup(client, timeout=3))
+
+    assert [call["request_id"] for call in client.calls] == ["duplex-warmup-0", "duplex-warmup-1"]
+    assert all(call["decoding_type"] == 1 for call in client.calls)
+    assert all(call["timeout"] == 3 for call in client.calls)
+
+
+def test_model_warmup_required_raises(monkeypatch):
+    client = FailingWarmupClient()
+    monkeypatch.setattr(duplex_server, "warmup_prompt", ["a"])
+
+    async def scenario():
+        try:
+            await duplex_server.model_warmup(client, timeout=3, required=True)
+        except RuntimeError as exc:
+            assert "warmup timeout" in str(exc)
+        else:
+            raise AssertionError("RuntimeError was not raised")
+
+    run(scenario())

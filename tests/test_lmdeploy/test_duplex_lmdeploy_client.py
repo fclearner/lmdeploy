@@ -68,6 +68,7 @@ def test_validity_decision_maps_token_id_and_config():
 
     call = fake.calls[0]
     assert call["infer_type"] == 0
+    assert call["timeout_s"] == 1
     assert call["max_new_tokens"] == 1
     assert call["include_token_ids"] is True
     assert call["generation_config"]["token_decision_valid_id"] == 11
