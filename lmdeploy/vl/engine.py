@@ -43,7 +43,13 @@ class ImageEncoder:
             vision_config = VisionConfig()
         self.vision_config = vision_config
         self.max_batch_size = vision_config.max_batch_size
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        if vision_config.thread_safe:
+            max_workers = vision_config.max_batch_size
+        else:
+            max_workers = getattr(self.model, 'executor_max_workers', 1)
+        if backend_config is not None and backend_config.max_batch_size is not None:
+            max_workers = min(max_workers, backend_config.max_batch_size)
+        self.executor = ThreadPoolExecutor(max_workers=max(1, max_workers))
         self._uses_new_preprocess = self._is_new_preprocess_api(self.model)
         torch.cuda.empty_cache()
 
@@ -160,8 +166,9 @@ class ImageEncoder:
                                          tools=tools,
                                          chat_template_kwargs=chat_template_kwargs)
         # clear data
-        for i, message in enumerate(messages):
-            if isinstance(message['content'], list):
-                messages[i]['preprocess'] = None
-                messages[i]['forward'] = None
+        if isinstance(messages, list):
+            for i, message in enumerate(messages):
+                if isinstance(message['content'], list):
+                    messages[i]['preprocess'] = None
+                    messages[i]['forward'] = None
         return result

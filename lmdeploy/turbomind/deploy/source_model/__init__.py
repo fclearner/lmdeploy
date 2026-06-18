@@ -13,4 +13,5 @@ from .minicpmv import MiniCPMVModel  # noqa: F401
 from .mixtral import MixtralModel  # noqa: F401
 from .molmo import MolmoModel  # noqa: F401
 from .qwen import QwenModel  # noqa: F401
+from .qwen3_asr import Qwen3ASRModel  # noqa: F401
 from .xcomposer2 import Xcomposer2Model  # noqa: F401

@@ -9,7 +9,7 @@ import tqdm
 import yaml
 from mmengine import Registry
 
-from ..config import AttentionConfig, LoraConfig, ModelConfig, TurbomindModelConfig, config_from_dict, config_to_dict
+from ..config import AudioConfig, AttentionConfig, LoraConfig, ModelConfig, TurbomindModelConfig, config_from_dict, config_to_dict
 from ..source_model.base import BaseInputModel
 
 OUTPUT_MODELS = Registry('target model', locations=['lmdeploy.turbomind.deploy.target_model.base'])
@@ -50,6 +50,7 @@ class BaseOutputModel(ABC):
         self.model_config = cfg.model_config
         self.attention_config = cfg.attention_config
         self.lora_config = cfg.lora_config
+        self.audio_config = cfg.audio_config
         self.attn_tp_size = self.model_config.attn_tp_size
         self.attn_cp_size = self.model_config.attn_cp_size
         self.mlp_tp_size = self.model_config.mlp_tp_size
@@ -84,6 +85,7 @@ class BaseOutputModel(ABC):
 
         self.update_attention_config()
         self.update_lora_config()
+        self.update_audio_config()
         # ! Dependency on `self`
         self.model = model_cls(self)
 
@@ -116,6 +118,13 @@ class BaseOutputModel(ABC):
         final_cfg = config_to_dict(self.lora_config)
         final_cfg.update(self.input_model_info)
         self.lora_config = config_from_dict(LoraConfig, final_cfg)
+
+    def update_audio_config(self):
+        """Update audio config according to input model's audio info."""
+        final_cfg = config_to_dict(self.audio_config)
+        if hasattr(self.input_model, 'audio_info'):
+            final_cfg.update(self.input_model.audio_info())
+        self.audio_config = config_from_dict(AudioConfig, final_cfg)
 
     def export_config(self) -> None:
         """Export turbomind config."""
@@ -224,6 +233,8 @@ class BaseOutputModel(ABC):
         for i, reader in self.input_model.readers():
             if self.model(i, reader):
                 pbar.update(1)
+        if hasattr(self.input_model, 'export_extra'):
+            self.input_model.export_extra(self)
         pbar.close()
 
     def export_iter(self):
@@ -231,9 +242,12 @@ class BaseOutputModel(ABC):
         for i, reader in self.input_model.readers():
             self.model(i, reader)
             yield i
+        if hasattr(self.input_model, 'export_extra'):
+            self.input_model.export_extra(self)
 
     @property
     def tm_config(self):
         return TurbomindModelConfig(model_config=self.model_config,
                                     attention_config=self.attention_config,
-                                    lora_config=self.lora_config)
+                                    lora_config=self.lora_config,
+                                    audio_config=self.audio_config)

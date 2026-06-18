@@ -11,6 +11,8 @@ add_library(models STATIC
         llama/LlamaWeight.cc
         llama/LlamaDenseWeight.cc
         llama/LlamaDecoderLayerWeight.cc
+        llama/Qwen3AsrAudioTowerWeight.cc
+        llama/Qwen3AsrAudioTower.cu
         llama/LlamaFfnLayer.cc
         llama/moe_ffn_layer.cc
         llama/unified_decoder.cc

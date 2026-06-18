@@ -116,6 +116,7 @@ def check_vl_llm(backend: str, config: dict) -> bool:
         'InternS1ForConditionalGeneration', 'InternS1ProForConditionalGeneration',
         'InternS1_1_ForConditionalGeneration', 'Glm4vForConditionalGeneration',
         'InternS2PreviewForConditionalGeneration', 'InternS2PreviewForCausalLM',
+        'Qwen3ASRForConditionalGeneration',
     ])
     turbomind_unsupported_archs = ['Qwen3_5ForConditionalGeneration',
                                    'Qwen3_5MoeForConditionalGeneration',

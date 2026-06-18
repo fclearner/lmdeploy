@@ -610,6 +610,21 @@ class TurboMindInstance:
 
         return values, ranges
 
+    def prepare_audio_inputs(self, audio_features=None, audio_feature_lens=None, audio_embedding_ranges=None):
+        """Convert Qwen3-ASR native audio inputs."""
+        if audio_features is None:
+            return None, None, None
+
+        assert audio_feature_lens is not None
+        assert audio_embedding_ranges is not None
+
+        _MAP = dict(bfloat16=torch.bfloat16, float16=torch.float16)
+        dtype = _MAP[self.tm_model.config.model_config.data_type]
+        audio_features = audio_features.to(dtype=dtype, device='cpu').contiguous()
+        audio_feature_lens = torch.as_tensor(audio_feature_lens, dtype=torch.int32, device='cpu').contiguous()
+        audio_embedding_ranges = torch.as_tensor(audio_embedding_ranges, dtype=torch.int32, device='cpu').contiguous()
+        return audio_features, audio_feature_lens, audio_embedding_ranges
+
     def prepare_mrope(self, input_meta: dict[str, Any], input_len: int):
         mrope_position_ids = input_meta['mrope_position_ids']
         mrope_position_delta = input_meta['mrope_position_delta']
@@ -622,6 +637,9 @@ class TurboMindInstance:
                        gen_config: GenerationConfig,
                        input_embeddings=None,
                        input_embedding_ranges=None,
+                       audio_features=None,
+                       audio_feature_lens=None,
+                       audio_embedding_ranges=None,
                        input_meta: dict[str, Any] = None):
         """Convert inputs format."""
         assert isinstance(input_ids, Sequence)
@@ -635,6 +653,13 @@ class TurboMindInstance:
         if input_embeddings is not None:
             inputs['input_embeddings'] = input_embeddings.cpu()
             inputs['input_embedding_ranges'] = input_embedding_ranges
+
+        audio_features, audio_feature_lens, audio_embedding_ranges = self.prepare_audio_inputs(
+            audio_features, audio_feature_lens, audio_embedding_ranges)
+        if audio_features is not None:
+            inputs['audio_features'] = audio_features
+            inputs['audio_feature_lens'] = audio_feature_lens
+            inputs['audio_embedding_ranges'] = audio_embedding_ranges
 
         if input_meta and 'mrope_position_ids' in input_meta:
             mrope_position_ids, mrope_position_delta = self.prepare_mrope(input_meta, input_len)
@@ -666,6 +691,9 @@ class TurboMindInstance:
                                  input_ids,
                                  input_embeddings=None,
                                  input_embedding_ranges=None,
+                                 audio_features=None,
+                                 audio_feature_lens=None,
+                                 audio_embedding_ranges=None,
                                  input_meta: dict[str, Any] = None,
                                  sequence_start: bool = True,
                                  sequence_end: bool = False,
@@ -695,6 +723,9 @@ class TurboMindInstance:
         inputs, input_len = self.prepare_inputs(input_ids=input_ids,
                                                 input_embeddings=input_embeddings,
                                                 input_embedding_ranges=input_embedding_ranges,
+                                                audio_features=audio_features,
+                                                audio_feature_lens=audio_feature_lens,
+                                                audio_embedding_ranges=audio_embedding_ranges,
                                                 input_meta=input_meta,
                                                 gen_config=gen_config)
 
@@ -807,10 +838,16 @@ class TurboMindInstance:
     def _get_generation_config(self, cfg: GenerationConfig):
         c = _tm.GenerationConfig()
         c.max_new_tokens = cfg.max_new_tokens
-        c.top_k = cfg.top_k
-        c.top_p = cfg.top_p
-        c.min_p = cfg.min_p
-        c.temperature = cfg.temperature
+        if cfg.do_sample:
+            c.top_k = cfg.top_k
+            c.top_p = cfg.top_p
+            c.min_p = cfg.min_p
+            c.temperature = cfg.temperature
+        else:
+            c.top_k = 1
+            c.top_p = 0.0
+            c.min_p = 0.0
+            c.temperature = 1.0
         if cfg.stop_token_ids:
             c.eos_ids = cfg.stop_token_ids
         if cfg.bad_token_ids:

@@ -31,7 +31,7 @@ def config_to_dict(config):
     """Export config to a dict."""
     if not config:
         return dict()
-    assert isinstance(config, (ModelConfig, AttentionConfig, LoraConfig)), \
+    assert isinstance(config, (ModelConfig, AttentionConfig, LoraConfig, AudioConfig)), \
         f'A dataclass is expected, but got {type(config)}'
 
     return asdict(config)
@@ -149,11 +149,29 @@ class LoraConfig:
 
 
 @dataclass
+class AudioConfig:
+    enabled: bool = False
+    d_model: int = None
+    output_dim: int = None
+    num_mel_bins: int = None
+    downsample_hidden_size: int = None
+    encoder_layers: int = None
+    encoder_attention_heads: int = None
+    encoder_ffn_dim: int = None
+    max_source_positions: int = None
+    n_window: int = None
+    n_window_infer: int = None
+    conv_chunksize: int = None
+    activation_function: str = ''
+
+
+@dataclass
 class TurbomindModelConfig:
     """Config for turbomind model."""
     model_config: ModelConfig = None
     attention_config: AttentionConfig = None
     lora_config: LoraConfig = None
+    audio_config: AudioConfig = None
 
     def update_from_engine_config(self, config: TurbomindEngineConfig):
         """Update the attributes of this instance with the attributes from
@@ -214,13 +232,16 @@ class TurbomindModelConfig:
 
         return TurbomindModelConfig(model_config=config_from_dict(ModelConfig, _cfg['model_config']),
                                     attention_config=config_from_dict(AttentionConfig, _cfg['attention_config']),
-                                    lora_config=config_from_dict(LoraConfig, _cfg['lora_config']))
+                                    lora_config=config_from_dict(LoraConfig, _cfg['lora_config']),
+                                    audio_config=config_from_dict(AudioConfig, _cfg['audio_config']))
 
     def to_dict(self):
         """Export to a dict."""
+        audio_config = config_to_dict(self.audio_config) if self.audio_config and self.audio_config.enabled else {}
         return dict(model_config=config_to_dict(self.model_config),
                     attention_config=config_to_dict(self.attention_config),
-                    lora_config=config_to_dict(self.lora_config))
+                    lora_config=config_to_dict(self.lora_config),
+                    audio_config=audio_config)
 
     @property
     def session_len(self):

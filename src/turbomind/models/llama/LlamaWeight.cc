@@ -89,6 +89,12 @@ void LlamaWeight::initialize()
     pre_decoder_embedding.weight  = empty_like(pre_decoder_embedding.weight, kCPU);
     post_decoder_embedding.weight = empty_like(post_decoder_embedding.weight, kCPU);
 
+    if (model_param_.audio.enabled) {
+        audio_tower_weight.reset(
+            new Qwen3AsrAudioTowerWeight(data_type_, model_param_.audio, data_type_, model_param_.group_size));
+        register_module("audio_tower", *audio_tower_weight);
+    }
+
     decoder_layer_weights.reserve(num_layer_);
     for (int i = 0; i < num_layer_; ++i) {
         decoder_layer_weights.emplace_back(
@@ -108,6 +114,7 @@ void LlamaWeight::release()
     pre_decoder_embedding  = {};
     post_decoder_embedding = {};
     output_norm_weight     = {};
+    audio_tower_weight     = {};
 
     for (auto& p : decoder_layer_weights) {
         delete p;
@@ -166,6 +173,9 @@ void LlamaWeight::prepare(const cudaDeviceProp& prop)
 
     for (auto& layer : decoder_layer_weights) {
         layer->prepare(prop, stream);
+    }
+    if (audio_tower_weight) {
+        audio_tower_weight->prepare();
     }
 
     auto to_device = [](Tensor& x) {

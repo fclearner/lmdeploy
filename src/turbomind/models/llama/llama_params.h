@@ -21,6 +21,23 @@ struct MLAParam {
     int v_head_dim;
 };
 
+struct AudioParam {
+    bool enabled = false;
+
+    int d_model                = 0;
+    int output_dim             = 0;
+    int num_mel_bins           = 0;
+    int downsample_hidden_size = 0;
+    int encoder_layers         = 0;
+    int encoder_attention_heads = 0;
+    int encoder_ffn_dim        = 0;
+    int max_source_positions   = 0;
+    int n_window               = 0;
+    int n_window_infer         = 0;
+    int conv_chunksize         = 0;
+    std::string activation_function;
+};
+
 struct ModelParam {
     size_t   head_num;
     size_t   head_dim;
@@ -71,6 +88,8 @@ struct ModelParam {
     DataType linear_state_dtype = {};
 
     bool attn_output_gate = false;  // Qwen3.5: doubles Q projection in full-attention layers
+
+    AudioParam audio;
 
     // Layer indices whose MoE experts use data_type (fp16) instead of
     // expert_weight_type (e.g. int4).  Populated from modules_to_not_convert

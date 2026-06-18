@@ -66,8 +66,9 @@ public:
                 return Request::kInvalid;
             }
 
-            // clone the embeds if the request persists
-            if (!r.session.end_flag) {
+            // Clone host embeds if the request persists. Device embeds already carry
+            // owning buffers and can be patched directly during setup.
+            if (!r.session.end_flag && embeds.device().type != kDEVICE) {
                 auto tmp = std::exchange(embeds, empty_like(embeds));
                 std::copy_n((const uint8_t*)tmp.raw_data(), tmp.byte_size(), (uint8_t*)embeds.raw_data());
             }
@@ -155,8 +156,8 @@ public:
 
         ////////////////////////////////////////////////////////////////
         /// input embeddings
-        d.input_embeds_coords.clear();
-        auto embed_ptr = (uint8_t*)d.input_embeds_buf.raw_data();
+        d.input_embed_patches.clear();
+        int embed_offset = 0;
         for (int k = 0; k < rc.size(); ++k) {
             if (auto& c = *rc[k]; !c.autoregres) {
                 const auto& embeds  = c.seq->input_embeds;
@@ -168,8 +169,15 @@ public:
                     auto     o = r & s;
                     if (auto size = (int)o.size()) {
                         auto src  = embeds[i].slice(o.begin() - r.begin(), size);
-                        embed_ptr = std::copy_n((const uint8_t*)src.raw_data(), src.byte_size(), embed_ptr);
-                        d.input_embeds_coords.emplace_back(size, p.begin() + (o.begin() - s.begin()));
+                        if (src.device().type == kDEVICE) {
+                            d.input_embed_patches.push_back({std::move(src), p.begin() + (o.begin() - s.begin())});
+                        }
+                        else {
+                            auto dst = d.input_embeds_buf.slice(embed_offset, size);
+                            std::copy_n((const uint8_t*)src.raw_data(), src.byte_size(), (uint8_t*)dst.raw_data());
+                            d.input_embed_patches.push_back({std::move(dst), p.begin() + (o.begin() - s.begin())});
+                            embed_offset += size;
+                        }
                     }
                 }
             }
@@ -205,15 +213,18 @@ public:
     {
         auto&      d           = data_.at(phase);
         const auto byte_stride = byte_size(embeds.dtype(), embeds.stride(0));
-        int        offset      = 0;
-        for (const auto& [size, pos] : d.input_embeds_coords) {
-            auto src = d.input_embeds_buf.slice(offset, size);
+        for (const auto& [src, pos] : d.input_embed_patches) {
+            TM_CHECK_EQ(src.dtype(), embeds.dtype());
             copy((uint8_t*)src.raw_data(), src.byte_size(), (uint8_t*)embeds.raw_data() + byte_stride * pos);
-            offset += size;
         }
     }
 
 private:
+    struct EmbeddingPatch {
+        Tensor source;
+        int    position;
+    };
+
     struct Data {
         Buffer_<int> input_ids;
         Buffer_<int> input_ids_offsets;
@@ -224,7 +235,7 @@ private:
         Buffer_<int> autoreg_ids_pos;
 
         Tensor                      input_embeds_buf;
-        vector<std::pair<int, int>> input_embeds_coords;  // (size, pos)
+        vector<EmbeddingPatch>      input_embed_patches;
     };
 
 private:

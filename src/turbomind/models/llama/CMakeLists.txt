@@ -15,6 +15,7 @@ add_library(Llama STATIC
         LlamaWeight.cc
         LlamaDenseWeight.cc
         LlamaDecoderLayerWeight.cc
+        Qwen3AsrAudioTowerWeight.cc
         LlamaFfnLayer.cc
         moe_ffn_layer.cc
         unified_decoder.cc

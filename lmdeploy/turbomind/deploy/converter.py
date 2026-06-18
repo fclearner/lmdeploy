@@ -7,6 +7,7 @@ from lmdeploy.utils import get_logger
 
 from ...utils import _get_and_verify_max_len, is_bf16_supported
 from ..supported_models import SUPPORTED_ARCHS
+from . import source_model as _source_model  # noqa: F401
 from .config import TurbomindModelConfig
 from .module import Transformer
 from .policy import get_input_policy

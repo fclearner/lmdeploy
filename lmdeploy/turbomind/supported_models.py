@@ -31,6 +31,7 @@ SUPPORTED_ARCHS = dict(
     Qwen2_5_VLForConditionalGeneration='qwen2',
     # Qwen3
     Qwen3ForCausalLM='qwen3',
+    Qwen3ASRForConditionalGeneration='qwen3_asr',
     Qwen3MoeForCausalLM='qwen3-moe',
     # Qwen 3.5
     Qwen3_5ForConditionalGeneration='qwen3_5',
@@ -86,7 +87,10 @@ def is_supported(model_path: str, trust_remote_code: bool = False):
     """  # noqa: E501
 
     def _is_head_dim_supported(cfg):
-        head_dim = cfg.head_dim if hasattr(cfg, 'head_dim') else cfg.hidden_size // cfg.num_attention_heads
+        if isinstance(cfg, dict):
+            head_dim = cfg.get('head_dim') or cfg['hidden_size'] // cfg['num_attention_heads']
+        else:
+            head_dim = cfg.head_dim if hasattr(cfg, 'head_dim') else cfg.hidden_size // cfg.num_attention_heads
         return head_dim in [128, 64]
 
     support_by_turbomind = False
@@ -106,6 +110,12 @@ def is_supported(model_path: str, trust_remote_code: bool = False):
                 support_by_turbomind = False
         elif arch in ['Qwen2ForCausalLM', 'LlamaForCausalLM']:
             support_by_turbomind = _is_head_dim_supported(cfg)
+        elif arch == 'Qwen3ASRForConditionalGeneration':
+            thinker_config = getattr(cfg, 'thinker_config', {})
+            text_config = getattr(thinker_config, 'text_config', None)
+            if text_config is None and isinstance(thinker_config, dict):
+                text_config = thinker_config.get('text_config')
+            support_by_turbomind = text_config is not None and _is_head_dim_supported(text_config)
         elif arch in ('ChatGLMModel', 'ChatGLMForConditionalGeneration'):
             # chatglm1/2/3 is not working yet
             support_by_turbomind = cfg.num_layers == 40

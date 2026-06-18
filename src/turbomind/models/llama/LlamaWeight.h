@@ -25,6 +25,7 @@
 #include "src/turbomind/core/context.h"
 #include "src/turbomind/models/llama/LlamaDecoderLayerWeight.h"
 #include "src/turbomind/models/llama/LlamaDenseWeight.h"
+#include "src/turbomind/models/llama/Qwen3AsrAudioTowerWeight.h"
 #include "src/turbomind/models/llama/llama_params.h"
 
 namespace turbomind {
@@ -60,6 +61,8 @@ struct LlamaWeight: core::Module {
     LlamaDenseWeight post_decoder_embedding;
 
     Tensor output_norm_weight;
+
+    std::unique_ptr<Qwen3AsrAudioTowerWeight> audio_tower_weight;
 
 private:
     const ModelParam  model_param_;

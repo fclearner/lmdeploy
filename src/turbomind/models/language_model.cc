@@ -15,6 +15,7 @@
 #include "src/turbomind/generation/generation.h"
 #include "src/turbomind/kernels/gpt_kernels.h"
 #include "src/turbomind/models/input_processor.h"
+#include "src/turbomind/models/llama/Qwen3AsrAudioTower.h"
 #include "src/turbomind/models/llama/LlamaWeight.h"
 #include "src/turbomind/models/llama/llama_kernels.h"
 #include "src/turbomind/models/llama/llama_params.h"
@@ -76,10 +77,11 @@ struct LanguageModel::Impl {
 
     vector<Data> data_;
 
-    std::optional<InputProcessor>   input_processor_;
-    std::unique_ptr<UnifiedDecoder> unified_decoder_;
-    std::optional<OutputProcessor>  output_processor_;
-    std::unique_ptr<Generation>     generation_;  // token generator
+    std::optional<InputProcessor>       input_processor_;
+    std::unique_ptr<Qwen3AsrAudioTower> audio_tower_;
+    std::unique_ptr<UnifiedDecoder>     unified_decoder_;
+    std::optional<OutputProcessor>      output_processor_;
+    std::unique_ptr<Generation>         generation_;  // token generator
 
     void Run(BatchOp op, int phase, TensorMap& env)
     {
@@ -95,6 +97,9 @@ struct LanguageModel::Impl {
             case BatchOp::kFetch:
                 return Fetch(phase, env);
             default:
+                if (op == BatchOp::kAdd) {
+                    AddAudioEmbeddings(env);
+                }
                 input_processor_->Run(op, phase, env);
                 unified_decoder_->Run(op, phase, env);
                 generation_->Run(op, phase, env);
@@ -114,6 +119,8 @@ struct LanguageModel::Impl {
     Tensor LookupEmbedding(const Buffer_<int>& input_ids, Buffer symm_buf);
     Tensor PostEmbedding(const Tensor& features, Buffer symm_buf);
 
+    int AddAudioEmbeddings(RequestCache& cache);
+    void AddAudioEmbeddings(TensorMap& env);
     void Setup(int phase, TensorMap& env);
     void Prepare(int phase, TensorMap& env);
     void Forward(int phase, TensorMap& env);
@@ -162,6 +169,9 @@ LanguageModel::Impl::Impl(DataType              dtype,
     }
 
     input_processor_.emplace(engine, param_, phases);
+    if (weights_.audio_tower_weight) {
+        audio_tower_ = std::make_unique<Qwen3AsrAudioTower>(param_.audio, linear_);
+    }
 
     unified_decoder_ = std::make_unique<UnifiedDecoder>(model, engine, attn, moe, ctx, phases);
 
@@ -408,6 +418,70 @@ void LanguageModel::Impl::Prepare(int phase, TensorMap& env)
     unified_decoder_->Run(BatchOp::kPrepare, phase, env);
     generation_->Run(BatchOp::kPrepare, phase, env);
     output_processor_->Run(BatchOp::kPrepare, phase, env);
+}
+
+int LanguageModel::Impl::AddAudioEmbeddings(RequestCache& cache)
+{
+    if (!audio_tower_ || !weights_.audio_tower_weight) {
+        return 0;
+    }
+
+    auto& c = cache;
+    auto& inputs = c.req->inputs;
+    const Tensor* audio_features = inputs.try_("audio_features");
+    const Tensor* feature_lens = inputs.try_("audio_feature_lens");
+    const Tensor* embedding_ranges = inputs.try_("audio_embedding_ranges");
+    if (!audio_features && !feature_lens && !embedding_ranges) {
+        return 0;
+    }
+    if (!audio_features || !feature_lens || !embedding_ranges) {
+        return Request::kInvalid;
+    }
+    if (embedding_ranges->device().type != kCPU || embedding_ranges->dtype() != kInt || embedding_ranges->ndim() != 2
+        || embedding_ranges->shape(1) != 2) {
+        return Request::kInvalid;
+    }
+    if (inputs.try_("input_embeddings") || inputs.try_("input_embedding_ranges")) {
+        return Request::kInvalid;
+    }
+
+    Tensor audio_embeddings = audio_tower_->Forward(*audio_features, *feature_lens, *weights_.audio_tower_weight);
+    if (audio_embeddings.shape(1) != param_.hidden_units / tp_size_) {
+        return Request::kInvalid;
+    }
+
+    const int* ranges = embedding_ranges->data<int>();
+    const int range_count = embedding_ranges->shape(0);
+    int audio_offset = 0;
+    int last = 0;
+    for (int i = 0; i < range_count; ++i) {
+        Interval audio_range{ranges[i * 2], ranges[i * 2 + 1]};
+        const int audio_size = static_cast<int>(audio_range.size());
+        if (audio_range.begin() < last || audio_offset + audio_size > audio_embeddings.shape(0)) {
+            return Request::kInvalid;
+        }
+        audio_offset += audio_size;
+        last = audio_range.end();
+    }
+    if (audio_offset != audio_embeddings.shape(0)) {
+        return Request::kInvalid;
+    }
+
+    Tensor host_ranges = *embedding_ranges;
+    inputs.emplace("input_embeddings", std::move(audio_embeddings));
+    inputs.emplace("input_embedding_ranges", std::move(host_ranges));
+    return 0;
+}
+
+void LanguageModel::Impl::AddAudioEmbeddings(TensorMap& env)
+{
+    const Buffer_<RequestCache*> rc = env.at("requests").buffer();
+    for (int i = 0; i < rc.size(); ++i) {
+        auto& cache = *TM_CHECK_NOTNULL(rc[i]);
+        if (cache.status == 0) {
+            cache.status = AddAudioEmbeddings(cache);
+        }
+    }
 }
 
 void LanguageModel::Impl::Forward(int phase, TensorMap& env)

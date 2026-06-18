@@ -405,6 +405,23 @@ TurboMind::Impl::Impl(string model_dir, string config, FFICtxFactory ffi_ctx_fac
     model_param_.attn_output_gate       = model["attn_output_gate"].as<bool>(false);
     model_param_.linear_state_dtype     = data_type_;
 
+    if (const auto audio = node["audio_config"]; audio && audio["enabled"].as<bool>(false)) {
+        auto& param                   = model_param_.audio;
+        param.enabled                 = true;
+        param.d_model                 = audio["d_model"].as<int>();
+        param.output_dim              = audio["output_dim"].as<int>();
+        param.num_mel_bins            = audio["num_mel_bins"].as<int>();
+        param.downsample_hidden_size  = audio["downsample_hidden_size"].as<int>();
+        param.encoder_layers          = audio["encoder_layers"].as<int>();
+        param.encoder_attention_heads = audio["encoder_attention_heads"].as<int>();
+        param.encoder_ffn_dim         = audio["encoder_ffn_dim"].as<int>();
+        param.max_source_positions    = audio["max_source_positions"].as<int>();
+        param.n_window                = audio["n_window"].as<int>();
+        param.n_window_infer          = audio["n_window_infer"].as<int>();
+        param.conv_chunksize          = audio["conv_chunksize"].as<int>();
+        param.activation_function     = audio["activation_function"].as<std::string>();
+    }
+
     if (auto uqel = model["unquantized_expert_layers"]) {
         for (auto it = uqel.begin(); it != uqel.end(); ++it) {
             model_param_.unquantized_expert_layers.insert(it->as<int>());

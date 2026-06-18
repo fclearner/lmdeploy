@@ -13,10 +13,10 @@ if(NOT pybind11_FOUND)
 endif()
 
 pybind11_add_module(${PROJECT_NAME} bind.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE turbomind xgrammar)
+target_link_libraries(${PROJECT_NAME} PRIVATE turbomind $<LINK_LIBRARY:WHOLE_ARCHIVE,xgrammar>)
 
 pybind11_add_module(_xgrammar xgrammar_bind.cpp)
-target_link_libraries(_xgrammar PRIVATE core xgrammar)
+target_link_libraries(_xgrammar PRIVATE core $<LINK_LIBRARY:WHOLE_ARCHIVE,xgrammar>)
 target_compile_features(_xgrammar PRIVATE cxx_std_14)
 
 if (CALL_FROM_SETUP_PY)

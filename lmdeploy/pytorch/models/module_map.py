@@ -145,6 +145,12 @@ MODULE_MAP.update({
     'Qwen3ForCausalLM': f'{LMDEPLOY_PYTORCH_MODEL_PATH}.qwen3.Qwen3ForCausalLM',
 })
 
+# qwen3 asr
+MODULE_MAP.update({
+    'Qwen3ASRForConditionalGeneration':
+    f'{LMDEPLOY_PYTORCH_MODEL_PATH}.qwen3_asr.Qwen3ASRForConditionalGeneration',
+})
+
 # qwen3 moe
 MODULE_MAP.update({
     'Qwen3MoeForCausalLM': f'{LMDEPLOY_PYTORCH_MODEL_PATH}.qwen3_moe.Qwen3MoeForCausalLM',

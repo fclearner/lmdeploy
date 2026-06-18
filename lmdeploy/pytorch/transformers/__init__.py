@@ -11,6 +11,9 @@ def register_config(model_type: str):
     if model_type == 'deepseek_v32':
         from lmdeploy.pytorch.transformers.configuration_deepseek_v32 import DeepseekV32Config
         AutoConfig.register(DeepseekV32Config.model_type, DeepseekV32Config)
+    elif model_type == 'qwen3_asr':
+        from lmdeploy.pytorch.transformers.configuration_qwen3_asr import Qwen3ASRConfig
+        AutoConfig.register(Qwen3ASRConfig.model_type, Qwen3ASRConfig)
     else:
         logger.debug(f'Can not register config for model_type: {model_type}')
 

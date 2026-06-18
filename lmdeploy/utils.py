@@ -320,9 +320,12 @@ def _get_and_verify_max_len(
     """Get and verify the model's maximum length."""
 
     # vl configs hide session-len inside llm configs
-    llm_keys = ['language_config', 'llm_config', 'text_config']
+    llm_keys = ['language_config', 'llm_config', 'thinker_config', 'text_config']
     for key in llm_keys:
-        hf_config = getattr(hf_config, key, hf_config)
+        if hasattr(hf_config, key):
+            hf_config = getattr(hf_config, key)
+        elif isinstance(hf_config, dict) and key in hf_config:
+            hf_config = hf_config[key]
 
     logger = get_logger('lmdeploy')
     derived_max_model_len = float('inf')
